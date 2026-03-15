@@ -25,6 +25,8 @@ export interface TopicMetadata {
   resources: TopicResource[];
   /** Current page URL */
   pageUrl: string;
+  /** Total number of topics in the current roadmap */
+  totalTopics: number;
 }
 
 export interface LearningCommitPayload {

@@ -58,6 +58,7 @@ export function extractTopicMetadata(): TopicMetadata | null {
     description,
     resources,
     pageUrl: window.location.href,
+    totalTopics: countTotalTopics(),
   };
 }
 
@@ -215,6 +216,21 @@ function slugifyTopic(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
+}
+
+/**
+ * Count total topics available in the current roadmap.
+ * roadmap.sh uses <g> elements with data-type="topic" for roadmap nodes.
+ */
+function countTotalTopics(): number {
+  // Topics are usually group elements with data-type="topic"
+  const topics = document.querySelectorAll('g[data-node-id][data-type="topic"]');
+  if (topics.length > 0) return topics.length;
+
+  // Fallback: count all group elements with a data-node-id and data-title
+  // as some roadmaps might have slightly different data-type values
+  const nodes = document.querySelectorAll('g[data-node-id][data-title]');
+  return nodes.length || 0;
 }
 
 /**
