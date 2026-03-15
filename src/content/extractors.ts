@@ -223,12 +223,27 @@ function slugifyTopic(name: string): string {
  * roadmap.sh uses <g> elements with data-type="topic" for roadmap nodes.
  */
 function countTotalTopics(): number {
-  // Topics are usually group elements with data-type="topic"
+  // 1. Try to find the native progress text (e.g., "2 of 137 Done")
+  // This is the most accurate source as verified by user feedback.
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node;
+  while (node = walker.nextNode()) {
+    const text = node.textContent?.trim() || "";
+    const match = text.match(/(\d+)\s+of\s+(\d+)\s+Done/i);
+    if (match) {
+      const total = parseInt(match[2], 10);
+      if (!isNaN(total)) {
+        console.debug(`[RoadmapHub] 🎯 Found native progress: ${text} (Total: ${total})`);
+        return total;
+      }
+    }
+  }
+
+  // 2. Fallback: Topics are usually group elements with data-type="topic"
   const topics = document.querySelectorAll('g[data-node-id][data-type="topic"]');
   if (topics.length > 0) return topics.length;
 
-  // Fallback: count all group elements with a data-node-id and data-title
-  // as some roadmaps might have slightly different data-type values
+  // 3. Last resort: count all group elements with a data-node-id and data-title
   const nodes = document.querySelectorAll('g[data-node-id][data-title]');
   return nodes.length || 0;
 }

@@ -205,16 +205,15 @@ function updateDashboard(
   const domainData: Record<string, { completed: number; total: number }> = {};
   
   // Find all domain headers like "### Backend" or "### Frontend"
-  // Improved regex: optional whitespace, optional carrying return, handles start of file
-  const domainRegex = /###\s+(.*?)\s*\r?\n((?:-.*?\r?\n?)*)/g;
+  // Captures header name and everything until next header or end
+  const domainRegex = /###\s+(.*?)\s*\r?\n([\s\S]*?)(?=###|##|$)/g;
   let match;
-  let foundAny = false;
   
   while ((match = domainRegex.exec(content)) !== null) {
-    foundAny = true;
     const domainName = match[1].trim();
     const slug = domainName.toLowerCase().replace(/\s+/g, "-");
-    const items = match[2].trim().split("\n").filter(line => line.trim().startsWith("- "));
+    const sectionContent = match[2].trim();
+    const items = sectionContent.split("\n").filter(line => line.trim().startsWith("- "));
     
     console.log(`[RoadmapHub] Detected domain: ${domainName} (${slug}) with ${items.length} items`);
 
@@ -261,11 +260,11 @@ function updateDashboard(
     rest.shift(); // remove the old dashboard content
     return parts[0] + dashboard + DASHBOARD_END + rest.join(DASHBOARD_END);
   } else {
-    // Insert dashboard after the title/header section
-    const separator = "---";
-    if (content.includes(separator)) {
-      const parts = content.split(separator);
-      return parts[0] + separator + "\n\n" + dashboard + separator + parts.slice(1).join(separator);
+    // Insert dashboard after the first title/description block
+    // We look for the first header or a separator
+    const headerIndex = content.indexOf("###");
+    if (headerIndex !== -1) {
+      return content.slice(0, headerIndex) + "\n" + dashboard + "---\n\n" + content.slice(headerIndex);
     }
     return content + "\n\n" + dashboard + "\n---\n";
   }
