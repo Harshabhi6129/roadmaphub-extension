@@ -8,3 +8,4 @@ GITHUB_CLIENT_ID = "YOUR_CLIENT_ID"
 # Secrets should be set via `wrangler secret put`:
 # GITHUB_CLIENT_SECRET
 # GEMINI_API_KEY
+# EXTENSION_SECRET

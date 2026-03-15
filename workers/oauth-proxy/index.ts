@@ -14,7 +14,7 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: {
-          "Access-Control-Allow-Origin": origin.startsWith("chrome-extension://") ? origin : "*",
+          "Access-Control-Allow-Origin": origin || "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, X-Extension-Secret",
         },
@@ -34,7 +34,7 @@ export default {
 
     const commonHeaders = {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Origin": origin || "*",
     };
 
     // --- 1. GitHub Token Exchange ---

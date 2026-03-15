@@ -4,15 +4,14 @@ export const REPO_NAME = "dev-learning-log";
  * GitHub OAuth App credentials.
  */
 export const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
-export const GITHUB_SCOPES = "repo"; // This line was not explicitly removed in the example, keeping it.
+export const GITHUB_SCOPES = "repo";
 
 /**
  * Cloudflare Worker Proxy for secure OAuth and AI calls.
  */
-export const WORKER_BASE_URL = import.meta.env.VITE_WORKER_BASE_URL || ""; // Changed default value as per example
-export const EXTENSION_SECRET = import.meta.env.VITE_EXTENSION_SECRET || ""; // Added as per instruction
+export const WORKER_BASE_URL = import.meta.env.VITE_WORKER_BASE_URL || "";
+export const EXTENSION_SECRET = import.meta.env.VITE_EXTENSION_SECRET || "";
 
-export const GITHUB_API_URL = "https://api.github.com"; // Added as per example
 export const GEMINI_API_URL = `${WORKER_BASE_URL}/gemini/enhance`;
 
 /** Message types between content script <-> background worker */
