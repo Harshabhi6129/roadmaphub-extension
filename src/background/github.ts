@@ -45,6 +45,10 @@ export async function commitLearning(
   markdownContent: string
 ): Promise<string> {
   const octokit = new Octokit({ auth: token });
+  
+  // --- 0. Ensure repo exists (it might have been deleted) ---
+  await ensureRepo(token);
+
   const { data: user } = await octokit.rest.users.getAuthenticated();
   const login = user.login;
 
