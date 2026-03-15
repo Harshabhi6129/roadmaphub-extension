@@ -184,21 +184,40 @@ function updateDashboard(content: string, currentDomain: string, currentTotal: n
   const DASHBOARD_START = "## 📊 Progress Dashboard";
   const DASHBOARD_END = "---";
 
+  console.log(`[RoadmapHub] 📊 Updating dashboard. Domain: ${currentDomain}, Total: ${currentTotal}`);
+
   // Extract all sections and their item counts
   const domainData: Record<string, { completed: number; total: number }> = {};
   
   // Find all domain headers like "### Backend" or "### Frontend"
-  const domainRegex = /### (.*?)\n((?:- .*?\n?)*)/g;
+  // Improved regex: optional whitespace, optional carrying return, handles start of file
+  const domainRegex = /###\s+(.*?)\s*\r?\n((?:-.*?\r?\n?)*)/g;
   let match;
+  let foundAny = false;
+  
   while ((match = domainRegex.exec(content)) !== null) {
-    const domainName = match[1];
-    const slug = match[1].toLowerCase().replace(/\s+/g, "-");
-    const items = match[2].trim().split("\n").filter(line => line.startsWith("- "));
+    foundAny = true;
+    const domainName = match[1].trim();
+    const slug = domainName.toLowerCase().replace(/\s+/g, "-");
+    const items = match[2].trim().split("\n").filter(line => line.trim().startsWith("- "));
     
+    console.log(`[RoadmapHub] Detected domain: ${domainName} (${slug}) with ${items.length} items`);
+
     domainData[slug] = {
       completed: items.length,
-      total: (slug === currentDomain && currentTotal > 0) ? currentTotal : items.length // Fallback if not current
+      total: (slug === currentDomain && currentTotal > 0) ? currentTotal : items.length
     };
+  }
+
+  // Ensure current domain is at least tracked if not found by regex
+  if (!domainData[currentDomain] && currentTotal > 0) {
+    console.log(`[RoadmapHub] Current domain ${currentDomain} not found in log, adding to dashboard with 1 completion.`);
+    domainData[currentDomain] = { completed: 1, total: currentTotal };
+  }
+
+  if (Object.keys(domainData).length === 0) {
+    console.log("[RoadmapHub] No domains found to build dashboard table.");
+    return content; 
   }
 
   // Build the dashboard table
@@ -214,7 +233,6 @@ function updateDashboard(content: string, currentDomain: string, currentTotal: n
     
     dashboard += `| ${domainLink} | ${progressBar} | ${data.completed}/${data.total} | ${remaining} |\n`;
   }
-
   dashboard += `\n`;
 
   // Insert or replace the dashboard section
