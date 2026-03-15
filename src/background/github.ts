@@ -190,6 +190,7 @@ async function updateReadme(
 
 /**
  * Parses the README, calculates progress, and updates the dashboard section.
+ * Much more robust line-by-line parsing.
  */
 function updateDashboard(
   content: string,
@@ -202,40 +203,52 @@ function updateDashboard(
 
   console.log(`[RoadmapHub] 📊 Updating dashboard. Domain: ${currentDomain}, Total: ${currentTotal}`);
 
-  // Extract all sections and their item counts
+  const lines = content.split(/\r?\n/);
   const domainData: Record<string, { completed: number; total: number }> = {};
   
-  // Find all domain headers like "### Backend" or "### Frontend"
-  // Captures header name and everything until next header or end
-  // Supports #, ##, or ###
-  const domainRegex = /#{1,3}\s+(.*?)\s*\r?\n([\s\S]*?)(?=#+\s+|$)/g;
-  let match;
-  
-  while ((match = domainRegex.exec(content)) !== null) {
-    const domainName = match[1].trim();
-    // Skip the dashboard itself
-    if (domainName.includes("Dashboard")) continue;
+  let currentParserDomain = "";
+  let currentParserItems = 0;
 
-    const slug = domainName.toLowerCase().replace(/\s+/g, "-");
-    const sectionContent = match[2].trim();
-    const items = sectionContent.split("\n").filter(line => line.trim().startsWith("- "));
-    
-    console.log(`[RoadmapHub] Detected domain: ${domainName} (${slug}) with ${items.length} items`);
+  for (const line of lines) {
+    const headerMatch = line.match(/^#{1,3}\s+(.+)$/);
+    if (headerMatch) {
+      // If we were tracking a domain, save it now
+      if (currentParserDomain && !currentParserDomain.includes("Dashboard")) {
+        const slug = currentParserDomain.toLowerCase().replace(/\s+/g, "-");
+        const cachedTotal = cachedTotals[slug] || 0;
+        domainData[slug] = {
+          completed: currentParserItems,
+          total: (slug === currentDomain && currentTotal > 0) 
+            ? currentTotal 
+            : (cachedTotal > 0 ? cachedTotal : currentParserItems)
+        };
+      }
+      currentParserDomain = headerMatch[1].trim();
+      currentParserItems = 0;
+    } else if (line.trim().startsWith("- ")) {
+      currentParserItems++;
+    }
+  }
 
+  // Save the last domain found
+  if (currentParserDomain && !currentParserDomain.includes("Dashboard")) {
+    const slug = currentParserDomain.toLowerCase().replace(/\s+/g, "-");
     const cachedTotal = cachedTotals[slug] || 0;
-    
     domainData[slug] = {
-      completed: items.length,
+      completed: currentParserItems,
       total: (slug === currentDomain && currentTotal > 0) 
         ? currentTotal 
-        : (cachedTotal > 0 ? cachedTotal : items.length)
+        : (cachedTotal > 0 ? cachedTotal : currentParserItems)
     };
   }
 
-  // Ensure current domain is at least tracked if not found by regex
-  if (!domainData[currentDomain] && currentTotal > 0) {
-    console.log(`[RoadmapHub] Current domain ${currentDomain} not found in log, adding to dashboard with 1 completion.`);
-    domainData[currentDomain] = { completed: 1, total: currentTotal };
+  // Ensure current domain is at least tracked if not found or count is wrong
+  if (currentTotal > 0) {
+    if (!domainData[currentDomain]) {
+      domainData[currentDomain] = { completed: 1, total: currentTotal };
+    } else {
+      domainData[currentDomain].total = currentTotal;
+    }
   }
 
   if (Object.keys(domainData).length === 0) {
@@ -244,11 +257,13 @@ function updateDashboard(
   }
 
   // Build the dashboard table
-  let dashboard = `${DASHBOARD_START}\n\n`;
+  let dashboard = `\n${DASHBOARD_START}\n\n`;
   dashboard += `| Roadmap | Progress | Completed | Remaining |\n`;
   dashboard += `| :--- | :--- | :--- | :--- |\n`;
 
-  for (const [slug, data] of Object.entries(domainData)) {
+  const sortedDomains = Object.keys(domainData).sort();
+  for (const slug of sortedDomains) {
+    const data = domainData[slug];
     const percentage = Math.round((data.completed / (data.total || 1)) * 100);
     const progressBar = `![${percentage}%](https://geps.dev/progress/${percentage})`;
     const remaining = Math.max(0, data.total - data.completed);
@@ -261,18 +276,21 @@ function updateDashboard(
   // Insert or replace the dashboard section
   if (content.includes(DASHBOARD_START)) {
     const parts = content.split(DASHBOARD_START);
-    const rest = parts[1].split(DASHBOARD_END);
-    rest.shift(); // remove the old dashboard content
-    return parts[0] + dashboard + DASHBOARD_END + rest.join(DASHBOARD_END);
+    // Find the end separator after the dashboard start
+    const dashboardAndRest = parts[1];
+    const restParts = dashboardAndRest.split(DASHBOARD_END);
+    restParts.shift(); // remove the table section
+    return parts[0].trim() + "\n" + dashboard + DASHBOARD_END + "\n" + restParts.join(DASHBOARD_END).trim();
   } else {
-    // Insert dashboard after the title section
-    // Find the first occurrence of ANY header (single #, ##, or ###)
-    const headerMatch = content.match(/^#{1,3}\s+/m);
-    if (headerMatch && headerMatch.index !== undefined) {
-      const index = headerMatch.index;
-      return content.slice(0, index) + dashboard + "---\n\n" + content.slice(index);
+    // Insert dashboard after the first header (usually the title)
+    const firstHeaderMatch = content.match(/^#\s+.+$/m);
+    if (firstHeaderMatch && firstHeaderMatch.index !== undefined) {
+      const endOfTitleLine = content.indexOf("\n", firstHeaderMatch.index);
+      if (endOfTitleLine !== -1) {
+        return content.slice(0, endOfTitleLine).trim() + "\n" + dashboard + DASHBOARD_END + "\n\n" + content.slice(endOfTitleLine).trim();
+      }
     }
-    return content + "\n\n" + dashboard + "\n---\n";
+    return content.trim() + "\n\n" + dashboard + DASHBOARD_END + "\n";
   }
 }
 
