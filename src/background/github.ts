@@ -155,7 +155,12 @@ async function updateReadme(
   }
 
   // 2. Generate/Update Progress Dashboard
-  current = updateDashboard(current, domainSlug, totalTopics);
+  try {
+    current = updateDashboard(current, domainSlug, totalTopics);
+  } catch (error) {
+    console.warn("[RoadmapHub] Error updating progress dashboard in README:", error);
+    // Continue anyway to ensure the learning note is committed
+  }
 
   await octokit.rest.repos.createOrUpdateFileContents({
     owner: login,

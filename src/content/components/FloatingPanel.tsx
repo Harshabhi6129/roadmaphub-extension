@@ -136,9 +136,17 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: MSG.GET_AUTH_STATUS }, (resp: AuthStatus) => {
-      setAuthStatus(resp);
-    });
+    try {
+      chrome.runtime.sendMessage({ type: MSG.GET_AUTH_STATUS }, (resp: AuthStatus) => {
+        if (chrome.runtime.lastError) {
+          setErrorMsg("Extension reloaded. Please refresh the page to continue.");
+          return;
+        }
+        setAuthStatus(resp);
+      });
+    } catch (e) {
+      setErrorMsg("Extension context invalidated. Please refresh the page.");
+    }
   }, []);
 
   // Remove a resource
@@ -184,6 +192,11 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
         },
       },
       (resp: { success: boolean; data?: { summary: string; keyConcepts: string[]; tags: string[] }; error?: string }) => {
+        if (chrome.runtime.lastError) {
+          setErrorMsg("Extension context lost. Refresh the page.");
+          setStatus("idle");
+          return;
+        }
         if (resp.success && resp.data) {
           setDescription(resp.data.summary);
           if (resp.data.tags?.length) {
@@ -230,6 +243,11 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
         payload: { topic: updatedTopic, notes, code: "", tags: tagsArray, commitMessage, practiceFiles },
       },
       (resp: { success: boolean; url?: string; error?: string }) => {
+        if (chrome.runtime.lastError) {
+          setErrorMsg("Extension connection lost. Please refresh the page.");
+          setStatus("error");
+          return;
+        }
         if (resp.success) {
           setStatus("success");
           setCommitUrl(resp.url || "");

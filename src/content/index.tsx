@@ -58,12 +58,18 @@ function triggerPanel() {
   if (now - lastTriggerTime < 1000) return; // debounce 1s
   lastTriggerTime = now;
 
-  // Wait for roadmap.sh to update its own UI
+  // Capture metadata IMMEDIATELY while the DOM is still fresh
+  const capturedMetadata = extractTopicMetadata();
+  if (!capturedMetadata) {
+    console.debug("[RoadmapHub] Could not extract topic metadata immediately. Falling back to delayed extraction.");
+  }
+
+  // Wait for roadmap.sh to update its own UI (status marks, etc)
   setTimeout(() => {
-    const metadata = extractTopicMetadata();
-    if (metadata) {
-      console.log("[RoadmapHub] ✅ Topic detected:", metadata.topicName);
-      showPanel(metadata);
+    const finalMetadata = capturedMetadata || extractTopicMetadata();
+    if (finalMetadata) {
+      console.log("[RoadmapHub] ✅ Topic detected:", finalMetadata.topicName);
+      showPanel(finalMetadata);
     } else {
       console.warn("[RoadmapHub] Could not extract topic metadata. Is a topic modal open?");
     }
