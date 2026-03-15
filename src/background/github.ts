@@ -63,10 +63,10 @@ export async function commitLearning(
   console.log(`[RoadmapHub] 📝 Committing note to ${login}/${REPO_NAME}/${notePath}`);
   let fileSha: string | undefined;
   try {
-    const { data: existing } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
-      owner: login,
-      repo: REPO_NAME,
-      path: notePath,
+    // Direct URL construction to bypass Octokit's automatic slash encoding
+    const { data: existing } = await octokit.request({
+      method: "GET",
+      url: `/repos/${login}/${REPO_NAME}/contents/${notePath}`,
     }) as any;
     if (!Array.isArray(existing) && existing.type === "file") {
       fileSha = existing.sha;
@@ -75,13 +75,14 @@ export async function commitLearning(
     console.debug("[RoadmapHub] Note does not exist yet (or 404):", notePath);
   }
 
-  const { data: commitResult } = await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
-    owner: login,
-    repo: REPO_NAME,
-    path: notePath,
-    message: commitMessage || `learn(${domainSlug}): ${topic.topicName}`,
-    content: btoa(unescape(encodeURIComponent(markdownContent))),
-    sha: fileSha,
+  const { data: commitResult } = await octokit.request({
+    method: "PUT",
+    url: `/repos/${login}/${REPO_NAME}/contents/${notePath}`,
+    data: {
+      message: commitMessage || `learn(${domainSlug}): ${topic.topicName}`,
+      content: btoa(unescape(encodeURIComponent(markdownContent))),
+      sha: fileSha,
+    }
   }) as any;
 
   // --- 2. Commit practice files (if any) ---
@@ -90,10 +91,9 @@ export async function commitLearning(
     console.log(`[RoadmapHub] 📂 Committing practice file: ${practicePath}`);
     let practiceSha: string | undefined;
     try {
-      const { data: existing } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
-        owner: login,
-        repo: REPO_NAME,
-        path: practicePath,
+      const { data: existing } = await octokit.request({
+        method: "GET",
+        url: `/repos/${login}/${REPO_NAME}/contents/${practicePath}`,
       }) as any;
       if (!Array.isArray(existing) && existing.type === "file") {
         practiceSha = existing.sha;
@@ -102,13 +102,14 @@ export async function commitLearning(
       // new file
     }
 
-    await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
-      owner: login,
-      repo: REPO_NAME,
-      path: practicePath,
-      message: `practice(${domainSlug}): ${file.name} — ${topic.topicName}`,
-      content: file.content, // already base64
-      sha: practiceSha,
+    await octokit.request({
+      method: "PUT",
+      url: `/repos/${login}/${REPO_NAME}/contents/${practicePath}`,
+      data: {
+        message: `practice(${domainSlug}): ${file.name} — ${topic.topicName}`,
+        content: file.content, // already base64
+        sha: practiceSha,
+      }
     });
   }
 
@@ -133,10 +134,9 @@ async function updateReadme(
   let current = "";
 
   try {
-    const { data: readmeFile } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
-      owner: login,
-      repo: REPO_NAME,
-      path: "README.md",
+    const { data: readmeFile } = await octokit.request({
+      method: "GET",
+      url: `/repos/${login}/${REPO_NAME}/contents/README.md`,
     }) as any;
     if (!Array.isArray(readmeFile) && readmeFile.type === "file" && readmeFile.content) {
       readmeSha = readmeFile.sha;
@@ -177,13 +177,14 @@ async function updateReadme(
     // Continue anyway to ensure the learning note is committed
   }
 
-  await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
-    owner: login,
-    repo: REPO_NAME,
-    path: "README.md",
-    message: `docs: update README — ${topicName} (Progress: ${domainSlug})`,
-    content: btoa(unescape(encodeURIComponent(current))),
-    sha: readmeSha,
+  await octokit.request({
+    method: "PUT",
+    url: `/repos/${login}/${REPO_NAME}/contents/README.md`,
+    data: {
+      message: `docs: update README — ${topicName} (Progress: ${domainSlug})`,
+      content: btoa(unescape(encodeURIComponent(current))),
+      sha: readmeSha,
+    }
   });
 }
 
@@ -206,11 +207,15 @@ function updateDashboard(
   
   // Find all domain headers like "### Backend" or "### Frontend"
   // Captures header name and everything until next header or end
-  const domainRegex = /###\s+(.*?)\s*\r?\n([\s\S]*?)(?=###|##|$)/g;
+  // Supports #, ##, or ###
+  const domainRegex = /#{1,3}\s+(.*?)\s*\r?\n([\s\S]*?)(?=#+\s+|$)/g;
   let match;
   
   while ((match = domainRegex.exec(content)) !== null) {
     const domainName = match[1].trim();
+    // Skip the dashboard itself
+    if (domainName.includes("Dashboard")) continue;
+
     const slug = domainName.toLowerCase().replace(/\s+/g, "-");
     const sectionContent = match[2].trim();
     const items = sectionContent.split("\n").filter(line => line.trim().startsWith("- "));
@@ -260,11 +265,12 @@ function updateDashboard(
     rest.shift(); // remove the old dashboard content
     return parts[0] + dashboard + DASHBOARD_END + rest.join(DASHBOARD_END);
   } else {
-    // Insert dashboard after the first title/description block
-    // We look for the first header or a separator
-    const headerIndex = content.indexOf("###");
-    if (headerIndex !== -1) {
-      return content.slice(0, headerIndex) + "\n" + dashboard + "---\n\n" + content.slice(headerIndex);
+    // Insert dashboard after the title section
+    // Find the first occurrence of ANY header (single #, ##, or ###)
+    const headerMatch = content.match(/^#{1,3}\s+/m);
+    if (headerMatch && headerMatch.index !== undefined) {
+      const index = headerMatch.index;
+      return content.slice(0, index) + dashboard + "---\n\n" + content.slice(index);
     }
     return content + "\n\n" + dashboard + "\n---\n";
   }
