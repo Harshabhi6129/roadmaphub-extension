@@ -2,22 +2,40 @@ export interface Env {
   GITHUB_CLIENT_ID: string;
   GITHUB_CLIENT_SECRET: string;
   GEMINI_API_KEY: string;
+  EXTENSION_SECRET: string; // Set via `wrangler secret put`
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    const origin = request.headers.get("Origin") || "";
 
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin": origin.startsWith("chrome-extension://") ? origin : "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, X-Extension-Secret",
         },
       });
     }
+
+    // Security Verification: Shared Secret
+    const reqSecret = request.headers.get("X-Extension-Secret");
+    if (!env.EXTENSION_SECRET || reqSecret !== env.EXTENSION_SECRET) {
+      return new Response("Forbidden: Invalid extension secret", { status: 403 });
+    }
+
+    // Security Verification: Origin check (Optional but recommended)
+    if (origin && !origin.startsWith("chrome-extension://")) {
+      return new Response("Forbidden: Invalid origin", { status: 403 });
+    }
+
+    const commonHeaders = {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": origin,
+    };
 
     // --- 1. GitHub Token Exchange ---
     if (url.pathname === "/github/token" && request.method === "POST") {
@@ -39,12 +57,7 @@ export default {
         });
 
         const data = await response.json();
-        return new Response(JSON.stringify(data), {
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        });
+        return new Response(JSON.stringify(data), { headers: commonHeaders });
       } catch (err: any) {
         return new Response(err.message, { status: 500 });
       }
@@ -64,12 +77,7 @@ export default {
         });
 
         const data = await response.json();
-        return new Response(JSON.stringify(data), {
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        });
+        return new Response(JSON.stringify(data), { headers: commonHeaders });
       } catch (err: any) {
         return new Response(err.message, { status: 500 });
       }

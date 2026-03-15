@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { MSG } from "@/lib/constants";
 import type { AuthStatus } from "@/lib/types";
 import "@/styles/tailwind.css";
-import type { ProgressStore, RoadmapProgress } from "@/lib/progressStore";
+import type { ProgressStore } from "@/lib/progressStore";
 
 function getRoadmapEmoji(slug: string): string {
   const map: Record<string, string> = {

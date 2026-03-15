@@ -174,8 +174,6 @@ export async function updateReadme(
   }
 
   const currentContent = decodeUTF8(readmeData.content || "");
-  const DASHBOARD_START = "<!-- ROADMAPHUB:DASHBOARD:START -->";
-  const DASHBOARD_END = "<!-- ROADMAPHUB:DASHBOARD:END -->";
   const MARKER_REGEX = /<!-- ROADMAPHUB:DASHBOARD:START -->[\s\S]*?<!-- ROADMAPHUB:DASHBOARD:END -->/;
 
   const newDashboard = buildDashboard(progressStore);

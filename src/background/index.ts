@@ -7,7 +7,7 @@
  *  - AI enhancement orchestration
  *  - GitHub commit orchestration
  */
-import { MSG, GITHUB_CLIENT_ID, GITHUB_SCOPES, WORKER_BASE_URL } from "@/lib/constants";
+import { MSG, GITHUB_CLIENT_ID, GITHUB_SCOPES, WORKER_BASE_URL, EXTENSION_SECRET } from "@/lib/constants";
 import type { LearningCommitPayload, AIEnhanceRequest, AuthStatus, TypedExtensionMessage } from "@/lib/types";
 import { ensureRepo, commitLearning, updateReadme } from "./github";
 import { enhanceWithAI, buildMarkdown } from "./ai";
@@ -112,17 +112,20 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
     }
 
     // 3. Exchange the code via Worker Proxy (Secure)
-    const tokenResp = await fetch(`${WORKER_BASE_URL}/github/token`, {
+    const response = await fetch(`${WORKER_BASE_URL}/github/token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Extension-Secret": EXTENSION_SECRET
+      },
       body: JSON.stringify({ code }),
     });
 
-    if (!tokenResp.ok) {
-      return { success: false, error: `Worker Proxy error: ${tokenResp.status}` };
+    if (!response.ok) {
+      return { success: false, error: `Worker Proxy error: ${response.status}` };
     }
 
-    const tokenData = await tokenResp.json();
+    const tokenData = await response.json();
     const accessToken = tokenData.access_token;
 
     if (!accessToken) {

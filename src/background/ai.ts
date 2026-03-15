@@ -1,4 +1,4 @@
-import { GEMINI_API_URL } from "@/lib/constants";
+import { GEMINI_API_URL, EXTENSION_SECRET } from "@/lib/constants";
 import type { AIEnhanceRequest, AIEnhanceResponse, TopicResource } from "@/lib/types";
 
 /**
@@ -24,7 +24,10 @@ Return ONLY valid JSON with no markdown fences or extra text.`;
 
   const resp = await fetch(GEMINI_API_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { 
+      "Content-Type": "application/json",
+      "X-Extension-Secret": EXTENSION_SECRET
+    },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
     }),

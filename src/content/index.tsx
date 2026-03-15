@@ -229,11 +229,6 @@ function init() {
 
   // Initial sync attempt
   setTimeout(syncPageProgress, 2000);
-
-  // Re-sync on messages (existing listener is fine, but new init might override)
-  // The existing listener is outside init, so it will still be active.
-  // No need to re-add it here unless it's meant to be part of init.
-  // For now, I'll assume the existing one is sufficient.
 }
 
 if (document.readyState === "loading") {

@@ -29,16 +29,16 @@ export async function syncProgressFromPage(
 ): Promise<void> {
   const store = await getProgressStore();
   const existing = store[slug];
+  const reconciledCompleted = (existing?.committedSlugs?.length || 0) > 0 
+    ? Math.max(existing.completed, completed)  // take the higher number
+    : completed;
+
   store[slug] = {
     slug,
     displayName: existing?.displayName || displayName,
-    // Only update completed from page if we haven't committed yet
-    // (committed data is more precise than page scrape for our purposes)
-    completed: (existing?.committedSlugs?.length || 0) > 0 
-      ? Math.max(existing.completed, completed)  // take the higher number
-      : completed,
+    completed: reconciledCompleted,
     total,
-    progressPercent: Math.min(100, Math.round((completed / total) * 100)),
+    progressPercent: Math.min(100, Math.round((reconciledCompleted / total) * 100)),
     firstCommitDate: existing?.firstCommitDate || '',
     lastCommitDate: existing?.lastCommitDate || '',
     lastTopicName: existing?.lastTopicName || '',

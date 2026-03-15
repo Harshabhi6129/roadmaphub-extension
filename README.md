@@ -77,6 +77,7 @@ Edit `.env` with your Worker URL:
 ```env
 VITE_GITHUB_CLIENT_ID=your_github_oauth_client_id
 VITE_WORKER_BASE_URL=https://roadmaphub-proxy.your-username.workers.dev
+VITE_EXTENSION_SECRET=a_random_secure_string_shared_with_worker
 ```
 
 ### 3. Deploy Secure Proxy (Cloudflare Worker)
@@ -89,6 +90,7 @@ npm install
 # Set your secrets in Cloudflare
 npx wrangler secret put GITHUB_CLIENT_SECRET
 npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put EXTENSION_SECRET # Must match VITE_EXTENSION_SECRET
 # Deploy
 npx wrangler deploy
 ```
