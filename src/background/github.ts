@@ -233,40 +233,37 @@ function buildDashboard(store: ProgressStore): string {
   out += `| **${slugs.length}** | **${totalCompleted}** | **${totalTopics}** | **${overallPct}%** |\n\n`;
   out += `</div>\n\n---\n\n`;
 
-  const tiles = slugs.map(slug => buildTile(store[slug]));
-  out += `<table width="100%">\n`;
-  for (let i = 0; i < tiles.length; i += 2) {
-    out += `<tr>\n`;
-    out += `<td width="50%" valign="top">\n\n${tiles[i]}\n\n</td>\n`;
-    if (tiles[i + 1]) {
-      out += `<td width="50%" valign="top">\n\n${tiles[i + 1]}\n\n</td>\n`;
-    } else {
-      out += `<td width="50%"></td>\n`;
+  // Helper to "unslugify" topic slugs for the table
+  const unslugify = (slug: string) => slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+  slugs.forEach((slug, idx) => {
+    const r = store[slug];
+    const emoji = getRoadmapEmoji(slug);
+    const pct = r.progressPercent;
+    const barUrl = getBarUrl(pct, `${pct}%`);
+
+    out += `### ${emoji} ${r.displayName} — ${pct}% complete\n`;
+    out += `![Progress](${barUrl})\n\n`;
+    out += `<details>\n`;
+    out += `<summary>✅ ${r.completed} topics completed — click to expand</summary>\n\n`;
+    out += `| Topic | Date | <!-- per-topic dates not tracked -->\n`;
+    out += `|-------|------|\n`;
+    
+    // Sort committed slugs alphabetically or just use them
+    r.committedSlugs.forEach(topicSlug => {
+      const topicName = unslugify(topicSlug);
+      out += `| [${topicName}](${slug}/${topicSlug}.md) | ${r.lastCommitDate} |\n`;
+    });
+    
+    out += `\n</details>\n\n`;
+    
+    if (idx < slugs.length - 1) {
+      out += `---\n\n`;
     }
-    out += `</tr>\n`;
-  }
-  out += `</table>\n\n`;
+  });
+
   out += `<!-- ROADMAPHUB:DASHBOARD:END -->`;
   return out;
-}
-
-function buildTile(r: RoadmapProgress): string {
-  const pct = r.progressPercent;
-  const remaining = Math.max(0, r.total - r.completed);
-  const emoji = getRoadmapEmoji(r.slug);
-  const barUrl = getBarUrl(pct, `${pct}%`);
-  const statusDot = pct === 100 ? "🏆" : pct >= 75 ? "🔥" : pct >= 50 ? "📈" : pct >= 25 ? "🚀" : "🌱";
-  
-  let tile = `#### ${emoji} [${r.displayName}](https://roadmap.sh/${r.slug}) ${statusDot}\n\n`;
-  tile += `![Progress](${barUrl})\n\n`;
-  tile += `| | |\n|:--|:--|\n`;
-  tile += `| ✅ Completed | \`${r.completed} / ${r.total}\` |\n`;
-  tile += `| ⏳ Remaining | \`${remaining} topics\` |\n`;
-  if (r.firstCommitDate) tile += `| 📅 Started | \`${r.firstCommitDate}\` |\n`;
-  if (r.lastTopicName && r.lastTopicPath) tile += `| 📝 Last studied | [${r.lastTopicName}](${r.lastTopicPath}) |\n`;
-  if (r.lastCommitDate) tile += `| 🕐 Last active | \`${r.lastCommitDate}\` |\n`;
-  
-  return tile;
 }
 
 function getBarUrl(pct: number, label: string): string {
