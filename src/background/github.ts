@@ -60,40 +60,41 @@ export async function commitLearning(
   const notePath = `${domainSlug}/${topicSlug}.md`;
 
   // --- 1. Commit the markdown note ---
+  console.log(`[RoadmapHub] 📝 Committing note to ${login}/${REPO_NAME}/${notePath}`);
   let fileSha: string | undefined;
   try {
-    const { data: existing } = await octokit.rest.repos.getContent({
+    const { data: existing } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
       owner: login,
       repo: REPO_NAME,
       path: notePath,
-    });
+    }) as any;
     if (!Array.isArray(existing) && existing.type === "file") {
       fileSha = existing.sha;
     }
-  } catch {
-    // 404 — file doesn't exist yet, which is fine
+  } catch (e) {
+    console.debug("[RoadmapHub] Note does not exist yet (or 404):", notePath);
   }
 
-  const { data: commitResult } =
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner: login,
-      repo: REPO_NAME,
-      path: notePath,
-      message: commitMessage || `learn(${domainSlug}): ${topic.topicName}`,
-      content: btoa(unescape(encodeURIComponent(markdownContent))),
-      sha: fileSha,
-    });
+  const { data: commitResult } = await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
+    owner: login,
+    repo: REPO_NAME,
+    path: notePath,
+    message: commitMessage || `learn(${domainSlug}): ${topic.topicName}`,
+    content: btoa(unescape(encodeURIComponent(markdownContent))),
+    sha: fileSha,
+  }) as any;
 
   // --- 2. Commit practice files (if any) ---
   for (const file of practiceFiles) {
     const practicePath = `${domainSlug}/${topicSlug}-practice/${file.name}`;
+    console.log(`[RoadmapHub] 📂 Committing practice file: ${practicePath}`);
     let practiceSha: string | undefined;
     try {
-      const { data: existing } = await octokit.rest.repos.getContent({
+      const { data: existing } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
         owner: login,
         repo: REPO_NAME,
         path: practicePath,
-      });
+      }) as any;
       if (!Array.isArray(existing) && existing.type === "file") {
         practiceSha = existing.sha;
       }
@@ -101,7 +102,7 @@ export async function commitLearning(
       // new file
     }
 
-    await octokit.rest.repos.createOrUpdateFileContents({
+    await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
       owner: login,
       repo: REPO_NAME,
       path: practicePath,
@@ -132,11 +133,11 @@ async function updateReadme(
   let current = "";
 
   try {
-    const { data: readmeFile } = await octokit.rest.repos.getContent({
+    const { data: readmeFile } = await octokit.request("GET /repos/{owner}/{repo}/contents/{path+}", {
       owner: login,
       repo: REPO_NAME,
       path: "README.md",
-    });
+    }) as any;
     if (!Array.isArray(readmeFile) && readmeFile.type === "file" && readmeFile.content) {
       readmeSha = readmeFile.sha;
       current = decodeURIComponent(escape(atob(readmeFile.content.replace(/\n/g, ""))));
@@ -166,7 +167,7 @@ async function updateReadme(
     // Continue anyway to ensure the learning note is committed
   }
 
-  await octokit.rest.repos.createOrUpdateFileContents({
+  await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
     owner: login,
     repo: REPO_NAME,
     path: "README.md",
