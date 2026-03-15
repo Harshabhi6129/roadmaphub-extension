@@ -58,32 +58,6 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-// ========== History Monkey-patch for SPA Detection ==========
-
-const _push = history.pushState.bind(history);
-history.pushState = (...args) => {
-  _push(...args);
-  window.dispatchEvent(new Event("roadmaphub:navigate"));
-};
-window.addEventListener("popstate", () => window.dispatchEvent(new Event("roadmaphub:navigate")));
-
-window.addEventListener("roadmaphub:navigate", () => {
-  console.log("[RoadmapHub] Navigation detected, re-initializing...");
-  destroyPanel();
-  
-  // Sync page progress on SPA navigation
-  syncPageProgress();
-
-  // Try to restore panel if navigating back to a topic
-  chrome.storage.session.get(["pending_topic"]).then((res) => {
-    if (res.pending_topic) {
-      const topic = res.pending_topic as TopicMetadata;
-      if (window.location.href.includes(topic.roadmapSlug || "")) {
-        showPanel(topic);
-      }
-    }
-  });
-});
 
 // ========== Panel Injection with Shadow DOM ==========
 
@@ -203,28 +177,6 @@ function setupKeyboardDetection() {
   });
 }
 
-function setupMutationObserver() {
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === "attributes" && mutation.target instanceof HTMLElement) {
-        const el = mutation.target as HTMLElement;
-        if (el.tagName === "BUTTON" && el.textContent?.trim().toLowerCase().startsWith("done")) {
-           if (!pendingTopicMetadata) {
-              pendingTopicMetadata = extractTopicMetadata();
-              triggerPanel();
-           }
-        }
-      }
-    }
-  });
-
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["class", "data-state"],
-  });
-}
 
 // ========== Navigation Management ==========
 
@@ -254,6 +206,17 @@ function setupNavigationSync() {
     
     // Attempt to sync progress from the new page
     setTimeout(syncPageProgress, 1000);
+
+    // Try to restore panel if navigating back to a topic (e.g. browser back)
+    chrome.storage.session.get(["pending_topic"]).then((res) => {
+      if (res.pending_topic) {
+        const topic = res.pending_topic as TopicMetadata;
+        // Check if the current URL matches the topic slug to avoid showing on wrong roadmap
+        if (window.location.pathname.includes(topic.roadmapSlug)) {
+          showPanel(topic);
+        }
+      }
+    });
   });
 }
 
@@ -263,7 +226,6 @@ function init() {
   setupNavigationSync();
   setupClickDetection();
   setupKeyboardDetection();
-  setupMutationObserver(); // Keep mutation observer
 
   // Initial sync attempt
   setTimeout(syncPageProgress, 2000);

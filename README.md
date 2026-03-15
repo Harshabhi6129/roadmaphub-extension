@@ -72,29 +72,42 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials:
+Edit `.env` with your Worker URL:
 
 ```env
 VITE_GITHUB_CLIENT_ID=your_github_oauth_client_id
-VITE_GITHUB_CLIENT_SECRET=your_github_oauth_client_secret
-VITE_GEMINI_API_KEY=your_gemini_api_key
+VITE_WORKER_BASE_URL=https://roadmaphub-proxy.your-username.workers.dev
+```
+
+### 3. Deploy Secure Proxy (Cloudflare Worker)
+
+For security, API secrets are never bundled in the extension. They live in a Cloudflare Worker.
+
+```bash
+cd workers/oauth-proxy
+npm install
+# Set your secrets in Cloudflare
+npx wrangler secret put GITHUB_CLIENT_SECRET
+npx wrangler secret put GEMINI_API_KEY
+# Deploy
+npx wrangler deploy
 ```
 
 <details>
-<summary><strong>How to get these credentials</strong></summary>
+<summary><strong>Setup Details</strong></summary>
 
 **GitHub OAuth App:**
 1. Go to [github.com/settings/developers](https://github.com/settings/developers) → **New OAuth App**
 2. Set **Authorization callback URL** to: `https://<extension-id>.chromiumapp.org/`
-3. Copy the Client ID and Client Secret
+3. Copy the Client ID and Client Secret (Secret goes to Worker)
 
 **Gemini API Key:**
 1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Create a new key
+2. Create key (Goes to Worker)
 
 </details>
 
-### 3. Build & Load
+### 4. Build & Load extension
 
 ```bash
 npm run build
@@ -105,7 +118,7 @@ npm run build
 3. Click **Load unpacked** → select the `dist/` folder
 4. Pin the extension 📌
 
-### 4. Connect & Learn
+### 5. Connect & Learn
 
 1. Click the RoadmapHub icon → **Connect with GitHub**
 2. Go to [roadmap.sh](https://roadmap.sh) → pick any roadmap

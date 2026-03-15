@@ -234,7 +234,7 @@ async function handleCommit(
         payload.topic.topicName,
         `${slug}/${payload.topic.topicSlug}.md`,
         payload.topic.roadmapDomain,
-        payload.topic.totalTopics, // page-scraped total
+        payload.topic.completedTopics, // Corrected from totalTopics
         officialCount || payload.topic.totalTopics
       );
 
@@ -271,6 +271,12 @@ async function handleSyncProgress(payload: {
   }
 }
 
+/**
+ * Checks if a topic has been already committed.
+ * NOTE: This is based on the local progressStore. If a user reinstalls the extension
+ * or clears local storage, it may lose track of previously committed topics until
+ * a new commit or full sync reconciles it.
+ */
 async function handleCheckTopicExists(payload: {
   slug: string;
   topicSlug: string;

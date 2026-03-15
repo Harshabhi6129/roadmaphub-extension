@@ -17,12 +17,12 @@ export default defineManifest({
       "48": "icons/icon48.png",
     },
   },
-  permissions: ["storage", "activeTab", "scripting", "identity"],
+  permissions: ["storage", "activeTab", "scripting", "identity", "alarms"],
   host_permissions: [
     "https://roadmap.sh/*",
     "https://api.github.com/*",
     "https://github.com/*",
-    "https://generativelanguage.googleapis.com/*",
+    "https://*.workers.dev/*",
   ],
   background: {
     service_worker: "src/background/index.ts",
