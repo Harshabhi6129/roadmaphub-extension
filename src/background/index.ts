@@ -7,10 +7,17 @@
  *  - AI enhancement orchestration
  *  - GitHub commit orchestration
  */
-import { MSG, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_SCOPES, GEMINI_API_KEY } from "@/lib/constants";
+import { MSG, GITHUB_CLIENT_ID, GITHUB_SCOPES, WORKER_BASE_URL } from "@/lib/constants";
 import type { LearningCommitPayload, AIEnhanceRequest, AuthStatus } from "@/lib/types";
-import { ensureRepo, commitLearning } from "./github";
+import { ensureRepo, commitLearning, updateReadme } from "./github";
 import { enhanceWithAI, buildMarkdown } from "./ai";
+import { addToQueue } from "./queue";
+import { setupAlarms } from "./alarms";
+import { syncProgressFromPage, recordCommit, getProgressStore } from "@/lib/progressStore";
+import { getOfficialTopicCount } from "@/lib/roadmapData";
+
+// Initialize alarms
+setupAlarms();
 
 // ========== Chrome message listener ==========
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -35,6 +42,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case MSG.COMMIT_LEARNING:
       handleCommit(payload).then(sendResponse);
+      return true;
+
+    case MSG.SYNC_PROGRESS:
+      handleSyncProgress(payload).then(sendResponse);
       return true;
   }
 });
@@ -70,20 +81,25 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
     authUrl.searchParams.set("scope", GITHUB_SCOPES);
     authUrl.searchParams.set("state", crypto.randomUUID());
 
-    console.log("[RoadmapHub] Starting OAuth flow...");
-    console.log("[RoadmapHub] Redirect URL:", redirectUrl);
+    console.log("[RoadmapHub] Starting OAuth flow via Worker Proxy...");
 
-    // Launch the auth flow — opens GitHub in a popup
-    const responseUrl = await chrome.identity.launchWebAuthFlow({
+    // 1. Launch the auth flow with a 2-minute timeout
+    const authPromise = chrome.identity.launchWebAuthFlow({
       url: authUrl.toString(),
       interactive: true,
     });
 
+    const timeoutPromise = new Promise<undefined>((_, reject) =>
+      setTimeout(() => reject(new Error("Authentication timed out (2 minutes).")), 120000)
+    );
+
+    const responseUrl = await Promise.race([authPromise, timeoutPromise]);
+
     if (!responseUrl) {
-      return { success: false, error: "OAuth flow was cancelled." };
+      return { success: false, error: "OAuth flow was cancelled or timed out." };
     }
 
-    // Extract the auth code from the redirect URL
+    // 2. Extract the auth code
     const url = new URL(responseUrl);
     const code = url.searchParams.get("code");
 
@@ -91,22 +107,15 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
       return { success: false, error: "No authorization code received from GitHub." };
     }
 
-    // Exchange the code for an access token
-    const tokenResp = await fetch("https://github.com/login/oauth/access_token", {
+    // 3. Exchange the code via Worker Proxy (Secure)
+    const tokenResp = await fetch(`${WORKER_BASE_URL}/github/token`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-      },
-      body: JSON.stringify({
-        client_id: GITHUB_CLIENT_ID,
-        client_secret: GITHUB_CLIENT_SECRET,
-        code,
-      }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
     });
 
     if (!tokenResp.ok) {
-      return { success: false, error: `Token exchange failed: ${tokenResp.status}` };
+      return { success: false, error: `Worker Proxy error: ${tokenResp.status}` };
     }
 
     const tokenData = await tokenResp.json();
@@ -115,11 +124,11 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
     if (!accessToken) {
       return {
         success: false,
-        error: tokenData.error_description || "Failed to get access token.",
+        error: tokenData.error_description || "Failed to get access token from worker.",
       };
     }
 
-    // Fetch user info
+    // 4. Fetch user info
     const userResp = await fetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
@@ -130,14 +139,14 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
 
     const user = await userResp.json();
 
-    // Store everything
+    // 5. Store token and metadata
     await chrome.storage.local.set({
       gh_token: accessToken,
       gh_username: user.login,
       gh_avatar: user.avatar_url,
     });
 
-    // Ensure repo exists
+    // 6. Ensure repo exists
     await ensureRepo(accessToken);
 
     console.log("[RoadmapHub] ✅ OAuth complete:", user.login);
@@ -158,7 +167,7 @@ async function handleAIEnhance(
   payload: AIEnhanceRequest
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
   try {
-    const data = await enhanceWithAI(GEMINI_API_KEY, payload);
+    const data = await enhanceWithAI(payload);
     return { success: true, data };
   } catch (e) {
     return { success: false, error: (e as Error).message };
@@ -176,13 +185,13 @@ async function handleCommit(
       return { success: false, error: "Not connected to GitHub. Click the extension icon to connect." };
     }
 
-    // Enhance with AI
+    // Enhance with AI (optional)
     let aiSummary: string | undefined;
     let aiKeyConcepts: string[] | undefined;
     let tags = payload.tags;
 
     try {
-      const aiResult = await enhanceWithAI(GEMINI_API_KEY, {
+      const aiResult = await enhanceWithAI({
         topicName: payload.topic.topicName,
         roadmapDomain: payload.topic.roadmapDomain,
         description: payload.topic.description,
@@ -193,9 +202,7 @@ async function handleCommit(
       if (aiResult.tags?.length) {
         tags = Array.from(new Set([...tags, ...aiResult.tags]));
       }
-    } catch {
-      // AI failed, proceed without it
-    }
+    } catch { }
 
     const markdown = buildMarkdown(
       payload.topic.topicName,
@@ -210,8 +217,51 @@ async function handleCommit(
       aiKeyConcepts
     );
 
-    const url = await commitLearning(token, payload, markdown);
-    return { success: true, url };
+    try {
+      const url = await commitLearning(token, payload, markdown);
+      
+      // Update progress store after success
+      const slug = payload.topic.roadmapSlug;
+      const officialCount = await getOfficialTopicCount(slug);
+      
+      const fullStore = await recordCommit(
+        slug,
+        payload.topic.topicSlug,
+        payload.topic.topicName,
+        `${slug}/${payload.topic.topicSlug}.md`,
+        payload.topic.roadmapDomain,
+        payload.topic.totalTopics, // page-scraped total
+        officialCount || payload.topic.totalTopics
+      );
+
+      // Regenerate full README dashboard
+      const { gh_username } = await chrome.storage.local.get("gh_username");
+      await updateReadme(token, gh_username, fullStore);
+
+      return { success: true, url };
+    } catch (e) {
+      console.warn("[RoadmapHub] Direct commit failed, adding to offline queue...", e);
+      await addToQueue(payload, markdown);
+      return { 
+        success: true, 
+        error: "Commit queued! It will be pushed automatically when you are back online." 
+      };
+    }
+  } catch (e) {
+    console.error("[RoadmapHub] handleCommit error:", e);
+    return { success: false, error: (e as Error).message };
+  }
+}
+
+async function handleSyncProgress(payload: {
+  slug: string;
+  completed: number;
+  total: number;
+  displayName: string;
+}) {
+  try {
+    await syncProgressFromPage(payload.slug, payload.completed, payload.total, payload.displayName);
+    return { success: true };
   } catch (e) {
     return { success: false, error: (e as Error).message };
   }

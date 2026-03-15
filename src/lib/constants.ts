@@ -2,14 +2,15 @@ export const REPO_NAME = "dev-learning-log";
 
 /**
  * GitHub OAuth App credentials.
- * Set these in your .env file (see .env.example).
  */
 export const GITHUB_CLIENT_ID = import.meta.env.VITE_GITHUB_CLIENT_ID || "";
-export const GITHUB_CLIENT_SECRET = import.meta.env.VITE_GITHUB_CLIENT_SECRET || "";
 export const GITHUB_SCOPES = "repo";
 
-export const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
-export const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+/**
+ * Cloudflare Worker Proxy for secure OAuth and AI calls.
+ */
+export const WORKER_BASE_URL = import.meta.env.VITE_WORKER_BASE_URL || "https://roadmaphub-proxy.your-subdomain.workers.dev";
+export const GEMINI_API_URL = `${WORKER_BASE_URL}/gemini/enhance`;
 
 /** Message types between content script <-> background worker */
 export const MSG = {
@@ -23,4 +24,7 @@ export const MSG = {
 
   // AI
   AI_ENHANCE: "AI_ENHANCE",
+
+  // Progress
+  SYNC_PROGRESS: "SYNC_PROGRESS",
 } as const;

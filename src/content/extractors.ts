@@ -2,51 +2,33 @@ import type { TopicMetadata, TopicResource } from "@/lib/types";
 
 /**
  * Extract topic metadata from the currently open roadmap.sh topic modal.
- *
- * roadmap.sh renders topic details in a fixed right-side panel when a user
- * clicks on a roadmap SVG node. The modal is a `div.fixed.top-0.right-0`
- * with class `sm:max-w-[600px]`.
- *
- * This extractor is built from direct DOM inspection of the live site.
  */
 export function extractTopicMetadata(): TopicMetadata | null {
-  // --- 1. Determine roadmap slug from URL ---
-  // URL pattern: https://roadmap.sh/backend  or  https://roadmap.sh/devops
   const pathParts = window.location.pathname.split("/").filter(Boolean);
   const roadmapSlug = pathParts[0] || "unknown";
 
-  // --- 2. Find the topic modal ---
-  // The modal is a fixed div on the right side of the screen.
-  // It matches: div.fixed.top-0.right-0 with overflow-y-auto
   const modal = findTopicModal();
   if (!modal) {
-    console.debug("[RoadmapHub] No topic modal open — ignoring trigger");
+    console.debug("[RoadmapHub] No topic modal found.");
     return null;
   }
 
-  // --- 3. Extract topic name from <h1> ---
   const h1 = modal.querySelector("h1");
   const topicName = h1?.textContent?.trim() || "Unknown Topic";
 
-  // --- 4. Extract description ---
-  // The first <p> after the heading is the description
-  const paragraphs = modal.querySelectorAll("p");
+  // Description extraction improvements: Look for the first substantial paragraph
+  const paragraphs = modal.querySelectorAll("p, .prose p");
   let description = "";
   for (const p of Array.from(paragraphs)) {
     const text = p.textContent?.trim();
-    if (text && text.length > 20 && !text.startsWith("Visit the following")) {
+    if (text && text.length > 20 && !text.startsWith("Visit")) {
       description = text;
       break;
     }
   }
 
-  // --- 5. Extract categorized resource links ---
   const resources = extractResources(modal);
-
-  // --- 6. Try to get node ID from the recently-clicked SVG node ---
   const { nodeId, topicSlug: slugFromNode } = getActiveNodeInfo();
-
-  // Derive topic slug: from the node data, or fallback to slugifying the title
   const topicSlug = slugFromNode || slugifyTopic(topicName);
 
   return {
@@ -63,42 +45,28 @@ export function extractTopicMetadata(): TopicMetadata | null {
 }
 
 /**
- * Find the topic detail modal on roadmap.sh.
- * It's a fixed-position panel that slides in from the right.
+ * Find the topic detail modal with better heuristics.
  */
 function findTopicModal(): Element | null {
-  // Primary: look for the fixed right-side panel with content
-  const fixedDivs = document.querySelectorAll("div.fixed");
+  // 1. Data Test IDs (Future proofing)
+  const testIdModal = document.querySelector('[data-testid="topic-detail"], [data-testid="resource-modal"]');
+  if (testIdModal) return testIdModal;
+
+  // 2. Fixed right-side panel (Standard roadmap.sh)
+  const fixedDivs = document.querySelectorAll("div.fixed.top-0.right-0, div.fixed.top-0.left-0");
   for (const div of Array.from(fixedDivs)) {
-    const classes = div.className || "";
-    // The modal has top-0, right-0, and typically contains an h1
-    if (
-      (classes.includes("top-0") && classes.includes("right-0")) ||
-      (classes.includes("top-0") && div.querySelector("h1"))
-    ) {
+    if (div.querySelector("h1") && div.querySelector('button[aria-label="Close"], svg')) {
       const style = window.getComputedStyle(div);
-      if (style.display !== "none" && style.visibility !== "hidden") {
-        // Verify it actually has content (h1)
-        if (div.querySelector("h1")) {
-          return div;
-        }
-      }
+      if (style.display !== "none" && style.position === "fixed") return div;
     }
   }
 
-  // Fallback: any fixed/absolute element with an h1 and resource links
-  const candidates = document.querySelectorAll(
-    'div[class*="fixed"], div[class*="overlay"], div[role="dialog"]'
-  );
-  for (const el of Array.from(candidates)) {
-    const style = window.getComputedStyle(el);
-    if (
-      (style.position === "fixed" || style.position === "absolute") &&
-      style.display !== "none" &&
-      el.querySelector("h1") &&
-      el.querySelectorAll("a[href]").length > 0
-    ) {
-      return el;
+  // 3. Any absolute/fixed overlay with h1 and specific content markers
+  const overlays = document.querySelectorAll('div[class*="fixed"], div[class*="overlay"]');
+  for (const el of Array.from(overlays)) {
+    if (el.querySelector("h1") && (el.textContent?.includes("completed") || el.textContent?.includes("resources"))) {
+      const style = window.getComputedStyle(el);
+      if (style.zIndex && parseInt(style.zIndex) > 10) return el;
     }
   }
 
@@ -106,155 +74,94 @@ function findTopicModal(): Element | null {
 }
 
 /**
- * Extract categorized resource links from the modal.
- *
- * roadmap.sh topic content has links with type prefixes:
- *   - [@article@Title](url)
- *   - [@video@Title](url)
- *   - [@course@Title](url)
- *   - [@official@Title](url)
- *   - [@book@Title](url)
- *
- * In the rendered DOM, resource type appears as a badge/span before the link text.
+ * Extract Resources with better type detection.
  */
 function extractResources(modal: Element): TopicResource[] {
   const resources: TopicResource[] = [];
   const seenUrls = new Set<string>();
-
-  // Find all links in the modal
   const links = modal.querySelectorAll("a[href]");
 
   for (const link of Array.from(links)) {
     const anchor = link as HTMLAnchorElement;
     const href = anchor.href;
 
-    // Skip internal roadmap.sh links, hash links, and javascript:
-    if (
-      !href ||
-      href.startsWith("javascript:") ||
-      href.includes("roadmap.sh/signup") ||
-      href.includes("roadmap.sh/login") ||
-      seenUrls.has(href)
-    ) {
+    if (!href || href.startsWith("javascript:") || href.includes("roadmap.sh/signup") || seenUrls.has(href)) {
       continue;
     }
 
-    // Extract resource type from badge/span element
-    const typeSpan = anchor.querySelector("span");
-    let resourceType = "article"; // default
+    // Heuristic 1: Badge Text
+    const badge = anchor.querySelector("span, .badge");
+    const badgeText = badge?.textContent?.trim().toLowerCase() || "";
+    
+    // Heuristic 2: Title Text (e.g. "Video: Intro to X")
+    const fullText = anchor.textContent?.trim().toLowerCase() || "";
+    
+    let type = "article";
+    if (badgeText.includes("video") || fullText.includes("video:") || href.includes("youtube.com") || href.includes("youtu.be")) type = "video";
+    else if (badgeText.includes("course") || href.includes("udemy.com") || href.includes("coursera.org")) type = "course";
+    else if (badgeText.includes("official") || badgeText.includes("docs")) type = "official";
+    else if (badgeText.includes("book") || fullText.includes("book:")) type = "book";
 
-    if (typeSpan) {
-      const spanText = typeSpan.textContent?.trim().toLowerCase() || "";
-      if (spanText.includes("video")) resourceType = "video";
-      else if (spanText.includes("course")) resourceType = "course";
-      else if (spanText.includes("official")) resourceType = "official";
-      else if (spanText.includes("book")) resourceType = "book";
-      else if (spanText.includes("article")) resourceType = "article";
-    } else {
-      // Infer from URL
-      if (href.includes("youtube.com") || href.includes("youtu.be")) {
-        resourceType = "video";
-      } else if (href.includes("udemy.com") || href.includes("coursera.org")) {
-        resourceType = "course";
-      }
+    let title = anchor.innerText.trim();
+    if (badge?.textContent) {
+      title = title.replace(badge.textContent, "").trim();
     }
-
-    // Extract the visible link text (excluding the type badge)
-    let title = anchor.textContent?.trim() || href;
-    // Remove type prefix text if it's embedded in the link text
-    if (typeSpan?.textContent) {
-      title = title.replace(typeSpan.textContent, "").trim();
-    }
+    // Clean up common prefixes
+    title = title.replace(/^(video|article|course|official|book):\s*/i, "");
 
     if (title && href) {
       seenUrls.add(href);
-      resources.push({ type: resourceType, title, url: href });
+      resources.push({ type, title, url: href });
     }
   }
-
   return resources;
 }
 
-/**
- * Try to get the node ID and slug from the most recently clicked SVG node.
- *
- * On roadmap.sh, roadmap nodes are SVG <g> elements with:
- *   data-node-id="qSAdfaGUfn8mtmDjHJi3z"
- *   data-title="ACID"
- *   data-type="topic" | "subtopic"
- */
 function getActiveNodeInfo(): { nodeId: string; topicSlug: string } {
-  // Look for a node with a "done" visual indicator (recently toggled)
-  // Or try to match the h1 text to a node's data-title
-
   const modal = findTopicModal();
   const topicTitle = modal?.querySelector("h1")?.textContent?.trim() || "";
-
-  // Search all SVG group nodes for a matching title
   const nodes = document.querySelectorAll("g[data-node-id]");
+  
   for (const node of Array.from(nodes)) {
     const nodeTitle = node.getAttribute("data-title") || "";
-    if (
-      nodeTitle.toLowerCase() === topicTitle.toLowerCase() ||
-      nodeTitle.toLowerCase().includes(topicTitle.toLowerCase())
-    ) {
-      const nodeId = node.getAttribute("data-node-id") || "";
-      const slug = slugifyTopic(nodeTitle);
-      return { nodeId, topicSlug: slug };
+    if (nodeTitle.toLowerCase() === topicTitle.toLowerCase()) {
+      return { 
+        nodeId: node.getAttribute("data-node-id") || "", 
+        topicSlug: slugifyTopic(nodeTitle) 
+      };
     }
   }
-
   return { nodeId: "", topicSlug: slugifyTopic(topicTitle) };
 }
 
-/**
- * Convert a topic name to a URL/file slug.
- * e.g. "ACID Properties" → "acid-properties"
- */
 function slugifyTopic(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 /**
- * Count total topics available in the current roadmap.
- * roadmap.sh uses <g> elements with data-type="topic" for roadmap nodes.
+ * Count Total Topics with Split Counting (Topics vs Subtopics)
  */
-function countTotalTopics(): number {
-  // 1. Try to find the native progress text (e.g., "2 of 137 Done")
-  // This is the most accurate source as verified by user feedback.
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-  let node;
-  while (node = walker.nextNode()) {
-    const text = node.textContent?.trim() || "";
-    const match = text.match(/(\d+)\s+of\s+(\d+)\s+Done/i);
-    if (match) {
-      const total = parseInt(match[2], 10);
-      if (!isNaN(total)) {
-        console.debug(`[RoadmapHub] 🎯 Found native progress: ${text} (Total: ${total})`);
-        return total;
-      }
-    }
+export function countTotalTopics(): number {
+  // 1. Native indicator (Most reliable for whole roadmap)
+  // Look for "X of Y Done" text
+  const bodyText = document.body.innerText;
+  const match = bodyText.match(/(\d+)\s+of\s+(\d+)\s+Done/i);
+  if (match) {
+    const total = parseInt(match[2], 10);
+    if (!isNaN(total)) return total;
   }
 
-  // 2. Fallback: Topics are usually group elements with data-type="topic"
-  const topics = document.querySelectorAll('g[data-node-id][data-type="topic"]');
-  if (topics.length > 0) return topics.length;
+  // 2. SVG Node Count (Fallback)
+  // Check for both topics and subtopics
+  const topics = document.querySelectorAll('g[data-node-id][data-type="topic"]').length;
+  const subtopics = document.querySelectorAll('g[data-node-id][data-type="subtopic"]').length;
+  
+  if (topics > 0) return topics + subtopics;
 
-  // 3. Last resort: count all group elements with a data-node-id and data-title
-  const nodes = document.querySelectorAll('g[data-node-id][data-title]');
-  return nodes.length || 0;
+  // 3. Generic Node Count
+  return document.querySelectorAll('g[data-node-id]').length || 0;
 }
 
-/**
- * Convert a roadmap slug to a human-readable domain name.
- * e.g. "backend" → "Backend", "ai-engineer" → "AI Engineer"
- */
 function formatDomain(slug: string): string {
-  return slug
-    .split("-")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  return slug.split("-").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 }

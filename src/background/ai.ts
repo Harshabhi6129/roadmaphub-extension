@@ -5,7 +5,6 @@ import type { AIEnhanceRequest, AIEnhanceResponse, TopicResource } from "@/lib/t
  * Call the Gemini API to generate a structured learning summary.
  */
 export async function enhanceWithAI(
-  apiKey: string,
   req: AIEnhanceRequest
 ): Promise<AIEnhanceResponse> {
   const prompt = `You are a helpful developer learning assistant.
@@ -23,7 +22,7 @@ Generate a JSON response with these fields:
 
 Return ONLY valid JSON with no markdown fences or extra text.`;
 
-  const resp = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+  const resp = await fetch(GEMINI_API_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
