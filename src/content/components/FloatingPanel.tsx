@@ -114,6 +114,11 @@ const S = {
     borderRadius: "8px", background: "rgba(127,29,29,0.4)", border: "1px solid #991b1b",
     padding: "10px 12px", fontSize: "13px", color: "#fca5a5", marginBottom: "16px",
   },
+  infoBanner: {
+    borderRadius: "8px", background: "rgba(30,58,95,0.4)", border: "1px solid #1e3a5f",
+    padding: "10px 12px", fontSize: "13px", color: "#93c5fd", marginBottom: "16px",
+    display: "flex", gap: "8px", alignItems: "center",
+  },
   successContainer: {
     display: "flex", flexDirection: "column" as const, alignItems: "center",
     justifyContent: "center", height: "100%", gap: "16px", padding: "24px",
@@ -122,6 +127,7 @@ const S = {
 
 export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
   const [authStatus, setAuthStatus] = useState<AuthStatus>({ isLoggedIn: false });
+  const [isAlreadyCommitted, setIsAlreadyCommitted] = useState(false);
   const [description, setDescription] = useState(topic.description);
   const [notes, setNotes] = useState("");
   const [tags, setTags] = useState("");
@@ -136,18 +142,35 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
   const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
-    try {
-      chrome.runtime.sendMessage({ type: MSG.GET_AUTH_STATUS }, (resp: AuthStatus) => {
-        if (chrome.runtime.lastError) {
-          setErrorMsg("Extension reloaded. Please refresh the page to continue.");
-          return;
+    let cancelled = false;
+    
+    // Check Auth
+    chrome.runtime.sendMessage({ type: MSG.GET_AUTH_STATUS }, (resp: AuthStatus) => {
+      if (cancelled) return;
+      if (chrome.runtime.lastError) {
+        setErrorMsg("Extension context lost. Refresh the page.");
+        return;
+      }
+      setAuthStatus(resp);
+    });
+
+    // Check if Already Committed
+    chrome.runtime.sendMessage(
+      { 
+        type: MSG.CHECK_TOPIC_EXISTS, 
+        payload: { slug: topic.roadmapSlug, topicSlug: topic.topicSlug } 
+      },
+      (resp: { exists: boolean }) => {
+        if (cancelled) return;
+        if (resp?.exists) {
+          setIsAlreadyCommitted(true);
+          setCommitMessage(`update(${topic.roadmapSlug}): ${topic.topicName}`);
         }
-        setAuthStatus(resp);
-      });
-    } catch (e) {
-      setErrorMsg("Extension context invalidated. Please refresh the page.");
-    }
-  }, []);
+      }
+    );
+
+    return () => { cancelled = true; };
+  }, [topic.roadmapSlug, topic.topicSlug]);
 
   // Remove a resource
   const removeResource = useCallback((index: number) => {
@@ -314,6 +337,16 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
       {/* Scrollable form */}
       <div style={S.scrollBody}>
         {errorMsg && <div style={S.errorBanner}>{errorMsg}</div>}
+        
+        {isAlreadyCommitted && (
+          <div style={S.infoBanner}>
+            <span style={{ fontSize: "16px" }}>🔄</span>
+            <div>
+              <strong>Already committed</strong>
+              <div style={{ fontSize: "11px", opacity: 0.8 }}>This topic exists in your repo. Committing will update the existing file.</div>
+            </div>
+          </div>
+        )}
 
         {/* Description */}
         <div style={S.section}>
@@ -397,9 +430,16 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
 
       {/* Footer */}
       <div style={S.footer}>
-        <button onClick={handleCommit} disabled={status === "loading"}
-                style={{ ...S.commitBtn, opacity: status === "loading" ? 0.6 : 1 }}>
-          {status === "loading" ? "⏳ Committing..." : "🚀 Commit to GitHub"}
+        <button 
+          onClick={handleCommit} 
+          disabled={status === "loading"}
+          style={{ 
+            ...S.commitBtn, 
+            background: isAlreadyCommitted ? "#2563eb" : "#16a34a",
+            opacity: status === "loading" ? 0.6 : 1 
+          }}
+        >
+          {status === "loading" ? "⏳ Committing..." : isAlreadyCommitted ? "🔄 Update on GitHub" : "🚀 Commit to GitHub"}
         </button>
       </div>
     </div>

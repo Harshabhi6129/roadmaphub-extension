@@ -27,4 +27,5 @@ export const MSG = {
 
   // Progress
   SYNC_PROGRESS: "SYNC_PROGRESS",
+  CHECK_TOPIC_EXISTS: "CHECK_TOPIC_EXISTS",
 } as const;

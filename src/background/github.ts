@@ -2,6 +2,7 @@ import { Octokit } from "@octokit/rest";
 import { REPO_NAME } from "@/lib/constants";
 import type { LearningCommitPayload } from "@/lib/types";
 import type { ProgressStore, RoadmapProgress } from "@/lib/progressStore";
+import { slugify } from "@/lib/utils";
 
 // Repo confirmation cache to avoid repetitive GET /repos calls
 const confirmedRepos = new Set<string>();
@@ -23,10 +24,6 @@ function decodeUTF8(base64: string): string {
     bytes[i] = binary.charCodeAt(i);
   }
   return new TextDecoder().decode(bytes);
-}
-
-function slugify(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 /**

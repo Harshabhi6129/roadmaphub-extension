@@ -8,7 +8,7 @@
  *  - GitHub commit orchestration
  */
 import { MSG, GITHUB_CLIENT_ID, GITHUB_SCOPES, WORKER_BASE_URL } from "@/lib/constants";
-import type { LearningCommitPayload, AIEnhanceRequest, AuthStatus } from "@/lib/types";
+import type { LearningCommitPayload, AIEnhanceRequest, AuthStatus, TypedExtensionMessage } from "@/lib/types";
 import { ensureRepo, commitLearning, updateReadme } from "./github";
 import { enhanceWithAI, buildMarkdown } from "./ai";
 import { addToQueue } from "./queue";
@@ -20,7 +20,7 @@ import { getOfficialTopicCount } from "@/lib/roadmapData";
 setupAlarms();
 
 // ========== Chrome message listener ==========
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: TypedExtensionMessage, _sender, sendResponse) => {
   const { type, payload } = message;
 
   switch (type) {
@@ -46,6 +46,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case MSG.SYNC_PROGRESS:
       handleSyncProgress(payload).then(sendResponse);
+      return true;
+
+    case MSG.CHECK_TOPIC_EXISTS:
+      handleCheckTopicExists(payload).then(sendResponse);
       return true;
   }
 });
@@ -264,5 +268,19 @@ async function handleSyncProgress(payload: {
     return { success: true };
   } catch (e) {
     return { success: false, error: (e as Error).message };
+  }
+}
+
+async function handleCheckTopicExists(payload: {
+  slug: string;
+  topicSlug: string;
+}): Promise<{ exists: boolean }> {
+  try {
+    const store = await getProgressStore();
+    const roadmap = store[payload.slug];
+    const exists = roadmap?.committedSlugs?.includes(payload.topicSlug) || false;
+    return { exists };
+  } catch (e) {
+    return { exists: false };
   }
 }

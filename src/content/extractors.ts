@@ -1,4 +1,5 @@
 import type { TopicMetadata, TopicResource } from "@/lib/types";
+import { slugify } from "@/lib/utils";
 
 /**
  * Extract topic metadata from the currently open roadmap.sh topic modal.
@@ -29,7 +30,9 @@ export function extractTopicMetadata(): TopicMetadata | null {
 
   const resources = extractResources(modal);
   const { nodeId, topicSlug: slugFromNode } = getActiveNodeInfo();
-  const topicSlug = slugFromNode || slugifyTopic(topicName);
+  const topicSlug = slugFromNode || slugify(topicName);
+  
+  const progress = scrapedProgress();
 
   return {
     topicName,
@@ -40,7 +43,9 @@ export function extractTopicMetadata(): TopicMetadata | null {
     description,
     resources,
     pageUrl: window.location.href,
-    totalTopics: countTotalTopics(),
+    totalTopics: progress.total,
+    completedTopics: progress.completed,
+    progressPercent: progress.percent,
   };
 }
 
@@ -127,39 +132,41 @@ function getActiveNodeInfo(): { nodeId: string; topicSlug: string } {
     if (nodeTitle.toLowerCase() === topicTitle.toLowerCase()) {
       return { 
         nodeId: node.getAttribute("data-node-id") || "", 
-        topicSlug: slugifyTopic(nodeTitle) 
+        topicSlug: slugify(nodeTitle) 
       };
     }
   }
-  return { nodeId: "", topicSlug: slugifyTopic(topicTitle) };
-}
-
-function slugifyTopic(name: string): string {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return { nodeId: "", topicSlug: slugify(topicTitle) };
 }
 
 /**
- * Count Total Topics with Split Counting (Topics vs Subtopics)
+ * Scrape current progress from the page (N of M Done).
  */
-export function countTotalTopics(): number {
+export function scrapedProgress(): { completed: number; total: number; percent: number } {
   // 1. Native indicator (Most reliable for whole roadmap)
-  // Look for "X of Y Done" text
   const bodyText = document.body.innerText;
   const match = bodyText.match(/(\d+)\s+of\s+(\d+)\s+Done/i);
+  
   if (match) {
+    const completed = parseInt(match[1], 10);
     const total = parseInt(match[2], 10);
-    if (!isNaN(total)) return total;
+    if (!isNaN(completed) && !isNaN(total)) {
+      return { 
+        completed, 
+        total, 
+        percent: total > 0 ? Math.round((completed / total) * 100) : 0 
+      };
+    }
   }
 
   // 2. SVG Node Count (Fallback)
-  // Check for both topics and subtopics
   const topics = document.querySelectorAll('g[data-node-id][data-type="topic"]').length;
   const subtopics = document.querySelectorAll('g[data-node-id][data-type="subtopic"]').length;
+  const total = topics + subtopics;
   
-  if (topics > 0) return topics + subtopics;
-
-  // 3. Generic Node Count
-  return document.querySelectorAll('g[data-node-id]').length || 0;
+  // Try to find completed nodes (they have a specific SVG path or color usually, 
+  // but roadmap.sh changes this often. For now, we rely on the text indicator primarily)
+  return { completed: 0, total: total || 0, percent: 0 };
 }
 
 function formatDomain(slug: string): string {

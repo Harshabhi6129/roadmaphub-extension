@@ -1,3 +1,5 @@
+import { MSG } from "./constants";
+
 /** Shared types used across content, background, and popup scripts */
 
 /** A single categorized resource link from roadmap.sh */
@@ -27,6 +29,10 @@ export interface TopicMetadata {
   pageUrl: string;
   /** Total number of topics in the current roadmap */
   totalTopics: number;
+  /** Number of topics already completed on the page */
+  completedTopics: number;
+  /** Progress percentage scraped from the page */
+  progressPercent: number;
 }
 
 export interface LearningCommitPayload {
@@ -62,3 +68,15 @@ export interface AuthStatus {
   username?: string;
   avatarUrl?: string;
 }
+
+/**
+ * Type-safe message union for chrome.runtime messaging
+ */
+export type TypedExtensionMessage =
+  | { type: typeof MSG.GET_AUTH_STATUS; payload?: never }
+  | { type: typeof MSG.LOGIN_GITHUB; payload?: never }
+  | { type: typeof MSG.LOGOUT_GITHUB; payload?: never }
+  | { type: typeof MSG.AI_ENHANCE; payload: AIEnhanceRequest }
+  | { type: typeof MSG.COMMIT_LEARNING; payload: LearningCommitPayload }
+  | { type: typeof MSG.SYNC_PROGRESS; payload: { slug: string; completed: number; total: number; displayName: string } }
+  | { type: typeof MSG.CHECK_TOPIC_EXISTS; payload: { slug: string; topicSlug: string } };

@@ -226,18 +226,52 @@ function setupMutationObserver() {
   });
 }
 
+// ========== Navigation Management ==========
+
+function setupNavigationSync() {
+  // Monkey-patch history to detect SPA navigation
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+
+  history.pushState = function(...args) {
+    originalPushState.apply(this, args);
+    window.dispatchEvent(new Event("roadmaphub:navigate"));
+  };
+  history.replaceState = function(...args) {
+    originalReplaceState.apply(this, args);
+    window.dispatchEvent(new Event("roadmaphub:navigate"));
+  };
+
+  window.addEventListener("popstate", () => {
+    window.dispatchEvent(new Event("roadmaphub:navigate"));
+  });
+
+  window.addEventListener("roadmaphub:navigate", () => {
+    console.log("[RoadmapHub] 🧭 Navigation detected. Resetting state...");
+    lastTriggerTime = 0;
+    pendingTopicMetadata = null;
+    destroyPanel();
+    
+    // Attempt to sync progress from the new page
+    setTimeout(syncPageProgress, 1000);
+  });
+}
+
 function init() {
   if (!window.location.hostname.includes("roadmap.sh")) return;
-  console.log("[RoadmapHub] 🚀 V2 Detection Loaded (Shadow DOM + SPA Persistence)");
-
+  console.log("[RoadmapHub] Content script initialized 🚀");
+  setupNavigationSync();
   setupClickDetection();
   setupKeyboardDetection();
-  setupMutationObserver();
+  setupMutationObserver(); // Keep mutation observer
 
-  // Initial progress sync
-  syncPageProgress();
-  // Delay for SPAs where content renders late
-  setTimeout(syncPageProgress, 3000);
+  // Initial sync attempt
+  setTimeout(syncPageProgress, 2000);
+
+  // Re-sync on messages (existing listener is fine, but new init might override)
+  // The existing listener is outside init, so it will still be active.
+  // No need to re-add it here unless it's meant to be part of init.
+  // For now, I'll assume the existing one is sufficient.
 }
 
 if (document.readyState === "loading") {
