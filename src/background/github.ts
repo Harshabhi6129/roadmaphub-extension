@@ -159,9 +159,19 @@ async function updateReadme(
     }
   }
 
-  // 2. Generate/Update Progress Dashboard
+  // 2. Persist total count to storage for future dashboard updates
+  if (totalTopics > 0) {
+    const stored = await chrome.storage.local.get(["roadmap_totals"]);
+    const totals = stored.roadmap_totals || {};
+    totals[domainSlug] = totalTopics;
+    await chrome.storage.local.set({ roadmap_totals: totals });
+  }
+
+  const allTotals = (await chrome.storage.local.get(["roadmap_totals"])).roadmap_totals || {};
+
+  // 3. Generate/Update Progress Dashboard
   try {
-    current = updateDashboard(current, domainSlug, totalTopics);
+    current = updateDashboard(current, domainSlug, totalTopics, allTotals);
   } catch (error) {
     console.warn("[RoadmapHub] Error updating progress dashboard in README:", error);
     // Continue anyway to ensure the learning note is committed
@@ -180,7 +190,12 @@ async function updateReadme(
 /**
  * Parses the README, calculates progress, and updates the dashboard section.
  */
-function updateDashboard(content: string, currentDomain: string, currentTotal: number): string {
+function updateDashboard(
+  content: string,
+  currentDomain: string,
+  currentTotal: number,
+  cachedTotals: Record<string, number> = {}
+): string {
   const DASHBOARD_START = "## 📊 Progress Dashboard";
   const DASHBOARD_END = "---";
 
@@ -203,9 +218,13 @@ function updateDashboard(content: string, currentDomain: string, currentTotal: n
     
     console.log(`[RoadmapHub] Detected domain: ${domainName} (${slug}) with ${items.length} items`);
 
+    const cachedTotal = cachedTotals[slug] || 0;
+    
     domainData[slug] = {
       completed: items.length,
-      total: (slug === currentDomain && currentTotal > 0) ? currentTotal : items.length
+      total: (slug === currentDomain && currentTotal > 0) 
+        ? currentTotal 
+        : (cachedTotal > 0 ? cachedTotal : items.length)
     };
   }
 
