@@ -303,8 +303,10 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
       <div style={S.shell}>
         <TopBar onClose={onClose} />
         <div style={S.successContainer}>
-          <span style={{ fontSize: "48px" }}>✅</span>
-          <p style={{ fontSize: "18px", fontWeight: 600, color: "#fff" }}>Committed!</p>
+          <span style={{ fontSize: "48px" }}>{commitUrl ? "✅" : "⏳"}</span>
+          <p style={{ fontSize: "18px", fontWeight: 600, color: "#fff" }}>
+            {commitUrl ? "Committed!" : "Queued for commit"}
+          </p>
           {commitUrl && (
             <a href={commitUrl} target="_blank" rel="noreferrer noopener"
                style={{ fontSize: "13px", color: "#60a5fa", textDecoration: "underline" }}>

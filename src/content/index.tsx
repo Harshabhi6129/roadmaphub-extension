@@ -35,7 +35,7 @@ function syncPageProgress() {
 
   const completed = parseInt(match[1], 10);
   const total = parseInt(match[2], 10);
-  if (isNaN(completed) || isNaN(total) || total === 0) return;
+  if (isNaN(completed) || isNaN(total) || total < 0) return;
 
   chrome.runtime.sendMessage({
     type: MSG.SYNC_PROGRESS,
@@ -44,7 +44,6 @@ function syncPageProgress() {
       completed,
       total,
       displayName: formatDomainName(slug),
-      pageUrl: window.location.href,
     },
   });
 }

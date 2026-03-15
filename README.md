@@ -78,6 +78,10 @@ Edit `.env` with your Worker URL:
 VITE_GITHUB_CLIENT_ID=your_github_oauth_client_id
 VITE_WORKER_BASE_URL=https://roadmaphub-proxy.your-username.workers.dev
 VITE_EXTENSION_SECRET=a_random_secure_string_shared_with_worker
+
+> [!IMPORTANT]
+> `VITE_EXTENSION_SECRET` must **exactly match** the `EXTENSION_SECRET` set in your Cloudflare Worker (Step 3). If they differ, all API calls will fail with a 403 error.
+> Also, ensure `VITE_GITHUB_CLIENT_ID` matches the one set in your Worker's `wrangler.toml`.
 ```
 
 ### 3. Deploy Secure Proxy (Cloudflare Worker)
@@ -118,6 +122,7 @@ npm run build
 1. Open `chrome://extensions` in Chrome
 2. Enable **Developer mode** (top right)
 3. Click **Load unpacked** → select the `dist/` folder
+   - *Note: Ensure you select the `dist/` folder that contains `manifest.json`.*
 4. Pin the extension 📌
 
 ### 5. Connect & Learn

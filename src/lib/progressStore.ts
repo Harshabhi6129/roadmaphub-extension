@@ -38,7 +38,7 @@ export async function syncProgressFromPage(
     displayName: existing?.displayName || displayName,
     completed: reconciledCompleted,
     total,
-    progressPercent: Math.min(100, Math.round((reconciledCompleted / total) * 100)),
+    progressPercent: total > 0 ? Math.min(100, Math.round((reconciledCompleted / total) * 100)) : 0,
     firstCommitDate: existing?.firstCommitDate || '',
     lastCommitDate: existing?.lastCommitDate || '',
     lastTopicName: existing?.lastTopicName || '',
