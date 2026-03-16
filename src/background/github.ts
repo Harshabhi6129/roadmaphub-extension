@@ -122,6 +122,7 @@ export async function commitLearning(
   const existingFile = await fetchFileMetadata(token, login, REPO_NAME, notePath);
   
   try {
+    console.log(`[RoadmapHub] 🚀 PUT /repos/${login}/${REPO_NAME}/contents/${notePath}`);
     const { data: commitResult } = await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
       owner: login,
       repo: REPO_NAME,
@@ -130,20 +131,25 @@ export async function commitLearning(
       content: encodeUTF8(markdownContent),
       sha: existingFile?.sha,
     });
+    console.log(`[RoadmapHub] ✅ Note committed successfully: ${notePath}`);
 
-    // Commit practice files
-    for (const file of practiceFiles) {
-      const practicePath = `${domainSlug}/${topicSlug}-practice/${file.name}`;
-      const existingPractice = await fetchFileMetadata(token, login, REPO_NAME, practicePath);
+    // Commit practice files in parallel
+    if (practiceFiles.length > 0) {
+      console.log(`[RoadmapHub] 📂 Committing ${practiceFiles.length} practice files in parallel...`);
+      await Promise.all(practiceFiles.map(async (file) => {
+        const practicePath = `${domainSlug}/${topicSlug}-practice/${file.name}`;
+        const existingPractice = await fetchFileMetadata(token, login, REPO_NAME, practicePath);
 
-      await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
-        owner: login,
-        repo: REPO_NAME,
-        path: practicePath,
-        message: `practice(${domainSlug}): ${file.name} — ${topic.topicName}`,
-        content: file.content,
-        sha: existingPractice?.sha,
-      });
+        await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
+          owner: login,
+          repo: REPO_NAME,
+          path: practicePath,
+          message: `practice(${domainSlug}): ${file.name} — ${topic.topicName}`,
+          content: file.content,
+          sha: existingPractice?.sha,
+        });
+        console.log(`[RoadmapHub] ✅ Practice file committed: ${file.name}`);
+      }));
     }
 
     return (commitResult as any).content?.html_url || "";
@@ -192,6 +198,7 @@ export async function updateReadme(
   }
 
   try {
+    console.log(`[RoadmapHub] 🚀 Updating README.md dashboard...`);
     await octokit.request("PUT /repos/{owner}/{repo}/contents/{path+}", {
       owner: login,
       repo: REPO_NAME,
@@ -200,6 +207,7 @@ export async function updateReadme(
       content: encodeUTF8(updatedContent),
       sha: readmeData.sha,
     });
+    console.log(`[RoadmapHub] ✅ README.md updated.`);
   } catch (e: any) {
     if (e.status === 404) {
       confirmedRepos.delete(token);

@@ -6,7 +6,7 @@ interface CountCache {
   fetchedAt: number;
 }
 
-export async function getOfficialTopicCount(slug: string): Promise<number | null> {
+export async function getOfficialTopicCount(slug: string, token?: string): Promise<number | null> {
   // Check cache first
   const cached = await chrome.storage.local.get([CACHE_KEY]);
   const cache: CountCache = cached[CACHE_KEY] || { counts: {}, fetchedAt: 0 };
@@ -20,9 +20,10 @@ export async function getOfficialTopicCount(slug: string): Promise<number | null
     // roadmap.sh stores one .md file per topic in this directory
     // Each file = one learnable topic
     const url = `https://api.github.com/repos/kamranahmedse/developer-roadmap/contents/src/data/roadmaps/${slug}/content`;
-    const resp = await fetch(url, {
-      headers: { 'Accept': 'application/vnd.github.v3+json' }
-    });
+    const headers: Record<string, string> = { 'Accept': 'application/vnd.github.v3+json' };
+    if (token) headers['Authorization'] = `token ${token}`;
+
+    const resp = await fetch(url, { headers });
     
     if (resp.status === 404) {
       // This slug doesn't have a content directory (some roadmaps are image-only)

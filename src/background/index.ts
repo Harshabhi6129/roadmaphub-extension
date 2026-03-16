@@ -41,7 +41,7 @@ chrome.runtime.onMessage.addListener((message: TypedExtensionMessage, _sender, s
       return true;
 
     case MSG.COMMIT_LEARNING:
-      handleCommit(payload).then(sendResponse);
+      handleCommit(payload, sendResponse);
       return true;
 
     case MSG.SYNC_PROGRESS:
@@ -183,34 +183,19 @@ async function handleAIEnhance(
 
 // ========== Commit Handler ==========
 async function handleCommit(
-  payload: LearningCommitPayload
+  payload: LearningCommitPayload,
+  sendResponse: (response?: any) => void
 ): Promise<{ success: boolean; url?: string; error?: string }> {
   try {
+    console.log("[RoadmapHub] 📥 Commit request received for:", payload.topic.topicName);
+    
     const result = await chrome.storage.local.get(["gh_token"]);
     const token = result.gh_token;
     if (!token) {
       return { success: false, error: "Not connected to GitHub. Click the extension icon to connect." };
     }
 
-    // Enhance with AI (optional)
-    let aiSummary: string | undefined;
-    let aiKeyConcepts: string[] | undefined;
-    let tags = payload.tags;
-
-    try {
-      const aiResult = await enhanceWithAI({
-        topicName: payload.topic.topicName,
-        roadmapDomain: payload.topic.roadmapDomain,
-        description: payload.topic.description,
-        notes: payload.notes,
-      });
-      aiSummary = aiResult.summary;
-      aiKeyConcepts = aiResult.keyConcepts;
-      if (aiResult.tags?.length) {
-        tags = Array.from(new Set([...tags, ...aiResult.tags]));
-      }
-    } catch { }
-
+    // AI summary is now handled by the UI before sending the commit request
     const markdown = buildMarkdown(
       payload.topic.topicName,
       payload.topic.roadmapDomain,
@@ -219,35 +204,51 @@ async function handleCommit(
       payload.notes,
       payload.code,
       payload.topic.resources,
-      tags,
-      aiSummary,
-      aiKeyConcepts
+      payload.tags,
+      undefined, // aiSummary is already in payload.topic.description if applied
+      undefined  // aiKeyConcepts are already in payload.notes if applied
     );
 
+    console.log("[RoadmapHub] 📝 Markdown built, length:", markdown.length);
+
     try {
+      console.log("[RoadmapHub] 🚀 Committing note to GitHub...");
       const url = await commitLearning(token, payload, markdown);
+      console.log("[RoadmapHub] ✅ Note committed:", url);
       
-      // Update progress store after success
-      const slug = payload.topic.roadmapSlug;
-      const officialCount = await getOfficialTopicCount(slug);
-      
-      const fullStore = await recordCommit(
-        slug,
-        payload.topic.topicSlug,
-        payload.topic.topicName,
-        `${slug}/${payload.topic.topicSlug}.md`,
-        payload.topic.roadmapDomain,
-        payload.topic.completedTopics, // Corrected from totalTopics
-        officialCount || payload.topic.totalTopics
-      );
+      // Respond to UI IMMEDIATELY after primary commit logic
+      sendResponse({ success: true, url });
 
-      // Regenerate full README dashboard
-      const { gh_username } = await chrome.storage.local.get("gh_username");
-      await updateReadme(token, gh_username, fullStore);
+      // Non-blocking background updates (Progress & Dashboard)
+      (async () => {
+        try {
+          console.log("[RoadmapHub] ⚙️ Starting background sync (Progress & README)...");
+          const slug = payload.topic.roadmapSlug;
+          
+          // Fast sync: pass token to avoid rate limits
+          const officialCount = await getOfficialTopicCount(slug, token);
+          
+          const fullStore = await recordCommit(
+            slug,
+            payload.topic.topicSlug,
+            payload.topic.topicName,
+            `${slug}/${payload.topic.topicSlug}.md`,
+            payload.topic.roadmapDomain,
+            payload.topic.completedTopics,
+            officialCount || payload.topic.totalTopics
+          );
 
-      return { success: true, url };
+          const { gh_username } = await chrome.storage.local.get("gh_username");
+          await updateReadme(token, gh_username, fullStore);
+          console.log("[RoadmapHub] ✨ Background sync complete.");
+        } catch (bgErr) {
+          console.error("[RoadmapHub] ❌ Background sync failed:", bgErr);
+        }
+      })();
+
+      return { success: true, url }; // returned to the .then() chain, but UI got it via sendResponse already
     } catch (e) {
-      console.warn("[RoadmapHub] Direct commit failed, adding to offline queue...", e);
+      console.warn("[RoadmapHub] ⚠️ Direct commit flow interrupted, adding to offline queue...", e);
       await addToQueue(payload, markdown);
       return { 
         success: true, 
@@ -255,7 +256,7 @@ async function handleCommit(
       };
     }
   } catch (e) {
-    console.error("[RoadmapHub] handleCommit error:", e);
+    console.error("[RoadmapHub] ❌ handleCommit critical error:", e);
     return { success: false, error: (e as Error).message };
   }
 }

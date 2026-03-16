@@ -84,11 +84,13 @@ function showPanel(topic: TopicMetadata) {
   mountPoint.id = "mount";
   shadow.appendChild(mountPoint);
 
+  console.log("[RoadmapHub] 🚀 showPanel called with topic:", topic.topicName);
   panelRoot = createRoot(mountPoint);
   panelRoot.render(
     React.createElement(FloatingPanel, {
       topic,
       onClose: () => {
+        console.log("[RoadmapHub] ❌ Panel closed.");
         destroyPanel();
         chrome.storage.session.remove(["pending_topic"]);
       },
@@ -120,11 +122,10 @@ function triggerPanel() {
   pendingTopicMetadata = null; // reset
 
   if (finalMetadata) {
-    console.log("[RoadmapHub] ✅ Topic detected:", finalMetadata.topicName);
-    // 500ms delay for visual smoothness
-    setTimeout(() => showPanel(finalMetadata), 500);
+    console.log("[RoadmapHub] ✅ Topic detected successfully:", finalMetadata.topicName);
+    showPanel(finalMetadata);
   } else {
-    console.warn("[RoadmapHub] Could not extract topic metadata. Is a topic modal open?");
+    console.warn("[RoadmapHub] ❌ Could not extract topic metadata. Is a topic modal open?");
   }
 }
 
@@ -140,10 +141,13 @@ function setupClickDetection() {
       text.startsWith("done") ||
       text === "mark done" ||
       text === "mark as done" ||
-      text.includes("i completed");
+      text.includes("i completed") ||
+      text.includes("mark completed") ||
+      text.includes("finish") ||
+      text.includes("done!");
 
     if (isDoneAction) {
-      console.log(`[RoadmapHub] Detected click: "${text}"`);
+      console.log(`[RoadmapHub] 🎯 Detected click on likely "Done" button: "${text}"`);
       pendingTopicMetadata = extractTopicMetadata();
       triggerPanel();
     }

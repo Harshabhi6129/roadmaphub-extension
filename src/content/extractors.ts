@@ -10,9 +10,11 @@ export function extractTopicMetadata(): TopicMetadata | null {
 
   const modal = findTopicModal();
   if (!modal) {
-    console.debug("[RoadmapHub] No topic modal found.");
+    console.warn("[RoadmapHub] ❌ No topic modal found in the DOM.");
     return null;
   }
+
+  console.log("[RoadmapHub] 🔍 Found modal:", modal.tagName, modal.className);
 
   const h1 = modal.querySelector("h1");
   const topicName = h1?.textContent?.trim() || "Unknown Topic";
@@ -53,25 +55,30 @@ export function extractTopicMetadata(): TopicMetadata | null {
  * Find the topic detail modal with better heuristics.
  */
 function findTopicModal(): Element | null {
-  // 1. Data Test IDs (Future proofing)
+  // 1. Explicit Data Test IDs (Very high confidence)
   const testIdModal = document.querySelector('[data-testid="topic-detail"], [data-testid="resource-modal"]');
   if (testIdModal) return testIdModal;
 
-  // 2. Fixed right-side panel (Standard roadmap.sh)
-  const fixedDivs = document.querySelectorAll("div.fixed.top-0.right-0, div.fixed.top-0.left-0");
-  for (const div of Array.from(fixedDivs)) {
-    if (div.querySelector("h1") && div.querySelector('button[aria-label="Close"], svg')) {
-      const style = window.getComputedStyle(div);
-      if (style.display !== "none" && style.position === "fixed") return div;
+  // 2. The standard roadmap.sh side-panel (Most common)
+  const fixedSidePanel = document.querySelector("div.fixed.top-0.right-0");
+  if (fixedSidePanel && fixedSidePanel.querySelector("h1")) {
+    // Basic verification it's not a generic overlay
+    const text = fixedSidePanel.textContent?.toLowerCase() || "";
+    if (text.includes("completed") || text.includes("resources") || text.includes("visit")) {
+      return fixedSidePanel;
     }
   }
 
-  // 3. Any absolute/fixed overlay with h1 and specific content markers
-  const overlays = document.querySelectorAll('div[class*="fixed"], div[class*="overlay"]');
-  for (const el of Array.from(overlays)) {
-    if (el.querySelector("h1") && (el.textContent?.includes("completed") || el.textContent?.includes("resources"))) {
-      const style = window.getComputedStyle(el);
-      if (style.zIndex && parseInt(style.zIndex) > 10) return el;
+  // 3. Fallback: Any dialog/modal that looks like a topic detail
+  const modals = document.querySelectorAll('[role="dialog"], [aria-modal="true"], div.fixed.inset-0');
+  for (const modal of Array.from(modals)) {
+    const hasHeader = modal.querySelector("h1");
+    const text = modal.textContent?.toLowerCase() || "";
+    const isTopicLike = text.includes("completed") || text.includes("mark as done") || text.includes("resources");
+    
+    if (hasHeader && isTopicLike) {
+      const style = window.getComputedStyle(modal);
+      if (style.display !== "none" && style.visibility !== "hidden") return modal;
     }
   }
 

@@ -263,7 +263,14 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
     chrome.runtime.sendMessage(
       {
         type: MSG.COMMIT_LEARNING,
-        payload: { topic: updatedTopic, notes, code: "", tags: tagsArray, commitMessage, practiceFiles },
+        payload: { 
+          topic: { ...updatedTopic, description }, // Use current state (inc AI summary)
+          notes, 
+          code: "", 
+          tags: tagsArray, 
+          commitMessage, 
+          practiceFiles 
+        },
       },
       (resp: { success: boolean; url?: string; error?: string }) => {
         if (chrome.runtime.lastError) {
