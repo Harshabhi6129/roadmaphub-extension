@@ -185,17 +185,18 @@ async function handleAIEnhance(
 async function handleCommit(
   payload: LearningCommitPayload,
   sendResponse: (response?: any) => void
-): Promise<{ success: boolean; url?: string; error?: string }> {
+): Promise<void> {
   try {
     console.log("[RoadmapHub] 📥 Commit request received for:", payload.topic.topicName);
     
     const result = await chrome.storage.local.get(["gh_token"]);
     const token = result.gh_token;
     if (!token) {
-      return { success: false, error: "Not connected to GitHub. Click the extension icon to connect." };
+      console.warn("[RoadmapHub] ❌ No GitHub token found.");
+      sendResponse({ success: false, error: "Not connected to GitHub. Please sign in via the extension popup." });
+      return;
     }
 
-    // AI summary is now handled by the UI before sending the commit request
     const markdown = buildMarkdown(
       payload.topic.topicName,
       payload.topic.roadmapDomain,
@@ -205,27 +206,33 @@ async function handleCommit(
       payload.code,
       payload.topic.resources,
       payload.tags,
-      undefined, // aiSummary is already in payload.topic.description if applied
-      undefined  // aiKeyConcepts are already in payload.notes if applied
+      undefined,
+      undefined
     );
 
     console.log("[RoadmapHub] 📝 Markdown built, length:", markdown.length);
 
     try {
-      console.log("[RoadmapHub] 🚀 Committing note to GitHub...");
-      const url = await commitLearning(token, payload, markdown);
+      console.log("[RoadmapHub] 🚀 Committing note to GitHub (30s timeout)...");
+      
+      const commitWithTimeout = Promise.race([
+        commitLearning(token, payload, markdown),
+        new Promise<string>((_, reject) => 
+          setTimeout(() => reject(new Error("GitHub commit timed out (30 seconds). Check your connection.")), 30000)
+        )
+      ]);
+
+      const url = await commitWithTimeout;
       console.log("[RoadmapHub] ✅ Note committed:", url);
       
-      // Respond to UI IMMEDIATELY after primary commit logic
+      // Respond to UI IMMEDIATELY
       sendResponse({ success: true, url });
 
-      // Non-blocking background updates (Progress & Dashboard)
+      // Non-blocking background updates
       (async () => {
         try {
           console.log("[RoadmapHub] ⚙️ Starting background sync (Progress & README)...");
           const slug = payload.topic.roadmapSlug;
-          
-          // Fast sync: pass token to avoid rate limits
           const officialCount = await getOfficialTopicCount(slug, token);
           
           const fullStore = await recordCommit(
@@ -246,18 +253,19 @@ async function handleCommit(
         }
       })();
 
-      return { success: true, url }; // returned to the .then() chain, but UI got it via sendResponse already
-    } catch (e) {
-      console.warn("[RoadmapHub] ⚠️ Direct commit flow interrupted, adding to offline queue...", e);
-      await addToQueue(payload, markdown);
-      return { 
-        success: true, 
-        error: "Commit queued! It will be pushed automatically when you are back online." 
-      };
+    } catch (commitError: any) {
+      console.warn("[RoadmapHub] ⚠️ Primary commit failed. Attempting offline queue...", commitError.message);
+      try {
+        await addToQueue(payload, markdown);
+        sendResponse({ success: true, url: "", error: "Commit queued! It will be pushed when you are back online." });
+      } catch (queueError: any) {
+        console.error("[RoadmapHub] ❌ Failed to queue commit:", queueError.message);
+        sendResponse({ success: false, error: commitError.message || "Commit failed." });
+      }
     }
-  } catch (e) {
-    console.error("[RoadmapHub] ❌ handleCommit critical error:", e);
-    return { success: false, error: (e as Error).message };
+  } catch (e: any) {
+    console.error("[RoadmapHub] ❌ handleCommit critical error:", e.message);
+    sendResponse({ success: false, error: e.message });
   }
 }
 
