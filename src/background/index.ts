@@ -165,7 +165,7 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
 }
 
 async function handleLogout(): Promise<{ success: boolean }> {
-  await chrome.storage.local.remove(["gh_token", "gh_username", "gh_avatar"]);
+  await chrome.storage.local.remove(["gh_token", "gh_username", "gh_avatar", "repo_confirmed"]);
   return { success: true };
 }
 

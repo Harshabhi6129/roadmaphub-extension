@@ -4,8 +4,15 @@ import type { LearningCommitPayload } from "@/lib/types";
 import type { ProgressStore, RoadmapProgress } from "@/lib/progressStore";
 import { slugify } from "@/lib/utils";
 
-// Repo confirmation cache to avoid repetitive GET /repos calls
-const confirmedRepos = new Set<string>();
+// Persistent repository confirmation helpers
+async function isRepoConfirmed(): Promise<boolean> {
+  const r = await chrome.storage.local.get("repo_confirmed");
+  return !!r.repo_confirmed;
+}
+
+async function markRepoConfirmed(): Promise<void> {
+  await chrome.storage.local.set({ repo_confirmed: true });
+}
 
 /** Modern Base64 helper (Web API compliant) */
 function encodeUTF8(str: string): string {
@@ -58,7 +65,7 @@ async function fetchFileMetadata(token: string, owner: string, repo: string, pat
  * Ensure the dev-learning-log repo exists for the authenticated user.
  */
 export async function ensureRepo(token: string): Promise<string> {
-  if (confirmedRepos.has(token)) return ``; 
+  if (await isRepoConfirmed()) return ""; 
 
   const octokit = new Octokit({ auth: token });
   const { data: user } = await octokit.rest.users.getAuthenticated();
@@ -66,10 +73,12 @@ export async function ensureRepo(token: string): Promise<string> {
 
   try {
     await octokit.rest.repos.get({ owner: login, repo: REPO_NAME });
-    confirmedRepos.add(token);
+    await markRepoConfirmed();
+    console.log("[RoadmapHub] ✅ Repository confirmed via GitHub API.");
   } catch (e: unknown) {
     const err = e as { status?: number };
     if (err.status === 404) {
+      console.log("[RoadmapHub] 🛠️ Repository not found. Creating...");
       const defaultReadme = `# 🗺️ Dev Learning Log\n\n> Automatically tracked by [RoadmapHub](https://github.com/Harshabhi6129/roadmaphub-extension)  \n> Every topic I complete on [roadmap.sh](https://roadmap.sh) gets committed here automatically.\n\n<!-- ROADMAPHUB:DASHBOARD:START -->\n<!-- ROADMAPHUB:DASHBOARD:END -->\n\n---\n\n## 📖 Topics by Roadmap\n\n_Learning notes will appear here organized by roadmap domain as you commit topics._\n\n`;
 
       await octokit.rest.repos.createForAuthenticatedUser({
@@ -89,7 +98,8 @@ export async function ensureRepo(token: string): Promise<string> {
         message: "init: create dev-learning-log with RoadmapHub",
         content: encodeUTF8(defaultReadme),
       });
-      confirmedRepos.add(token);
+      await markRepoConfirmed();
+      console.log("[RoadmapHub] ✅ Repository created and confirmed.");
     } else if (err.status !== 422) {
       throw e;
     }
@@ -155,8 +165,8 @@ export async function commitLearning(
     return (commitResult as any).content?.html_url || "";
   } catch (e: any) {
     if (e.status === 404) {
-      console.warn("[RoadmapHub] Repo might have been deleted. Retrying cache-clear...");
-      confirmedRepos.delete(token);
+      console.warn("[RoadmapHub] Repo might have been deleted. Re-verifying...");
+      await chrome.storage.local.remove("repo_confirmed");
       return commitLearning(token, payload, markdownContent); // One-time retry
     }
     throw e;
@@ -210,7 +220,7 @@ export async function updateReadme(
     console.log(`[RoadmapHub] ✅ README.md updated.`);
   } catch (e: any) {
     if (e.status === 404) {
-      confirmedRepos.delete(token);
+      await chrome.storage.local.remove("repo_confirmed");
     }
     console.error("[RoadmapHub] Failed to update README dashboard", e);
   }
