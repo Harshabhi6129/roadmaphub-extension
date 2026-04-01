@@ -3,10 +3,9 @@
  */
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { extractTopicMetadata } from "./extractors";
+import { extractTopicMetadata, extractAllCompletedTopics } from "./extractors";
 import { FloatingPanel } from "./components/FloatingPanel";
 import type { TopicMetadata } from "@/lib/types";
-
 import { MSG } from "@/lib/constants";
 
 const PANEL_CONTAINER_ID = "roadmaphub-floating-panel";
@@ -21,10 +20,8 @@ function formatDomainName(slug: string): string {
     .join(" ");
 }
 
-/** 
- * Scrape current roadmap progress from the page 
- * and sync to background store.
- */
+// ========== Progress sync ==========
+
 function syncPageProgress() {
   const slug = window.location.pathname.split("/").filter(Boolean)[0];
   if (!slug || slug.length < 2) return;
@@ -35,70 +32,83 @@ function syncPageProgress() {
 
   const completed = parseInt(match[1], 10);
   const total = parseInt(match[2], 10);
-  if (isNaN(completed) || isNaN(total) || total < 0) return;
+  if (isNaN(completed) || isNaN(total) || total <= 0) return;
 
   chrome.runtime.sendMessage({
     type: MSG.SYNC_PROGRESS,
-    payload: {
-      slug,
-      completed,
-      total,
-      displayName: formatDomainName(slug),
-    },
+    payload: { slug, completed, total, displayName: formatDomainName(slug) },
+  });
+
+  // Check if topic count changed (changelog detection)
+  chrome.runtime.sendMessage({
+    type: MSG.CHECK_ROADMAP_UPDATES,
+    payload: { slug, currentCount: total },
+  }, (result) => {
+    if (result?.hasNewTopics && result.newTopicsCount > 0) {
+      console.log(
+        `[RoadmapHub] 🆕 ${result.newTopicsCount} new topic(s) added to the ${formatDomainName(slug)} roadmap!`
+      );
+      // Badge the extension icon
+      chrome.runtime.sendMessage({
+        type: "SET_BADGE",
+        payload: { text: `+${result.newTopicsCount}`, slug },
+      });
+    }
   });
 }
 
-// ========== Message Listener for Background/Popup ==========
+// ========== Message listener ==========
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "TRIGGER_SYNC") {
-    console.log("[RoadmapHub] Manual progress sync triggered.");
     syncPageProgress();
+    sendResponse({ success: true });
+    return true;
+  }
+
+  if (message.type === "GET_COMPLETED_TOPICS") {
+    // Content script extracts all completed topics for bulk commit
+    const topics = extractAllCompletedTopics();
+    sendResponse({ success: true, topics });
+    return true;
   }
 });
 
-
-// ========== Panel Injection with Shadow DOM ==========
+// ========== Shadow DOM panel ==========
 
 function showPanel(topic: TopicMetadata) {
   if (document.getElementById(PANEL_CONTAINER_ID)) {
     destroyPanel();
   }
 
-  const container = document.createElement("div");
-  container.id = PANEL_CONTAINER_ID;
-  document.body.appendChild(container);
+  // FIX: Persist pending topic to session storage BEFORE rendering the panel.
+  // This eliminates the race condition where navigation between session.set
+  // and render completion could lose the topic state.
+  chrome.storage.session.set({ pending_topic: topic }).then(() => {
+    const container = document.createElement("div");
+    container.id = PANEL_CONTAINER_ID;
+    document.body.appendChild(container);
 
-  // Attach Shadow DOM for isolation
-  const shadow = container.attachShadow({ mode: "open" });
-  
-  // Inject internal styles
-  const style = document.createElement("style");
-  style.textContent = `
-    :host { all: initial; font-family: sans-serif; }
-    #mount { position: fixed; z-index: 999999; }
-  `;
-  shadow.appendChild(style);
+    const shadow = container.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = `:host { all: initial; font-family: sans-serif; } #mount { position: fixed; z-index: 999999; }`;
+    shadow.appendChild(style);
 
-  const mountPoint = document.createElement("div");
-  mountPoint.id = "mount";
-  shadow.appendChild(mountPoint);
+    const mountPoint = document.createElement("div");
+    mountPoint.id = "mount";
+    shadow.appendChild(mountPoint);
 
-  console.log("[RoadmapHub] 🚀 showPanel called with topic:", topic.topicName);
-  panelRoot = createRoot(mountPoint);
-  panelRoot.render(
-    React.createElement(FloatingPanel, {
-      topic,
-      onClose: () => {
-        console.log("[RoadmapHub] ❌ Panel closed.");
-        destroyPanel();
-        chrome.storage.session.remove(["pending_topic"]);
-      },
-    })
-  );
-
-  // Persist to session storage for navigation recovery
-  chrome.storage.session.set({ pending_topic: topic });
+    panelRoot = createRoot(mountPoint);
+    panelRoot.render(
+      React.createElement(FloatingPanel, {
+        topic,
+        onClose: () => {
+          destroyPanel();
+          chrome.storage.session.remove(["pending_topic"]);
+        },
+      })
+    );
+  });
 }
 
 function destroyPanel() {
@@ -109,7 +119,7 @@ function destroyPanel() {
   document.getElementById(PANEL_CONTAINER_ID)?.remove();
 }
 
-// ========== Detection Logic ==========
+// ========== Detection logic ==========
 
 let lastTriggerTime = 0;
 function triggerPanel() {
@@ -117,41 +127,42 @@ function triggerPanel() {
   if (now - lastTriggerTime < 1000) return; // debounce 1s
   lastTriggerTime = now;
 
-  // Use pre-captured metadata if available, else try extracting now
   const finalMetadata = pendingTopicMetadata || extractTopicMetadata();
-  pendingTopicMetadata = null; // reset
+  pendingTopicMetadata = null;
 
   if (finalMetadata) {
-    console.log("[RoadmapHub] ✅ Topic detected successfully:", finalMetadata.topicName);
     showPanel(finalMetadata);
   } else {
-    console.warn("[RoadmapHub] ❌ Could not extract topic metadata. Is a topic modal open?");
+    console.warn("[RoadmapHub] Could not extract topic metadata. Is a topic modal open?");
   }
 }
 
 function setupClickDetection() {
-  document.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    const menuItem = target.closest('[role="menuitem"]');
-    const button = target.closest("button");
-    const clickable = menuItem || button || target;
+  document.addEventListener(
+    "click",
+    (e) => {
+      const target = e.target as HTMLElement;
+      const menuItem = target.closest('[role="menuitem"]');
+      const button = target.closest("button");
+      const clickable = menuItem || button || target;
+      const text = clickable.textContent?.trim().toLowerCase() || "";
 
-    const text = clickable.textContent?.trim().toLowerCase() || "";
-    const isDoneAction =
-      text.startsWith("done") ||
-      text === "mark done" ||
-      text === "mark as done" ||
-      text.includes("i completed") ||
-      text.includes("mark completed") ||
-      text.includes("finish") ||
-      text.includes("done!");
+      const isDoneAction =
+        text.startsWith("done") ||
+        text === "mark done" ||
+        text === "mark as done" ||
+        text.includes("i completed") ||
+        text.includes("mark completed") ||
+        text.includes("finish") ||
+        text.includes("done!");
 
-    if (isDoneAction) {
-      console.log(`[RoadmapHub] 🎯 Detected click on likely "Done" button: "${text}"`);
-      pendingTopicMetadata = extractTopicMetadata();
-      triggerPanel();
-    }
-  }, true);
+      if (isDoneAction) {
+        pendingTopicMetadata = extractTopicMetadata();
+        triggerPanel();
+      }
+    },
+    true
+  );
 }
 
 function setupKeyboardDetection() {
@@ -170,7 +181,9 @@ function setupKeyboardDetection() {
         activeEl?.getAttribute("contenteditable") === "true";
 
       if (!isTyping) {
-        const modal = document.querySelector('[data-testid="topic-detail"], [data-testid="resource-modal"], div.fixed.top-0.right-0');
+        const modal = document.querySelector(
+          '[data-testid="topic-detail"], [data-testid="resource-modal"], div.fixed.top-0.right-0'
+        );
         if (modal) {
           pendingTopicMetadata = extractTopicMetadata();
           triggerPanel();
@@ -180,41 +193,34 @@ function setupKeyboardDetection() {
   });
 }
 
-
-// ========== Navigation Management ==========
+// ========== Navigation management ==========
 
 function setupNavigationSync() {
-  // Monkey-patch history to detect SPA navigation
   const originalPushState = history.pushState;
   const originalReplaceState = history.replaceState;
 
-  history.pushState = function(...args) {
+  history.pushState = function (...args) {
     originalPushState.apply(this, args);
     window.dispatchEvent(new Event("roadmaphub:navigate"));
   };
-  history.replaceState = function(...args) {
+  history.replaceState = function (...args) {
     originalReplaceState.apply(this, args);
     window.dispatchEvent(new Event("roadmaphub:navigate"));
   };
-
   window.addEventListener("popstate", () => {
     window.dispatchEvent(new Event("roadmaphub:navigate"));
   });
 
   window.addEventListener("roadmaphub:navigate", () => {
-    console.log("[RoadmapHub] 🧭 Navigation detected. Resetting state...");
     lastTriggerTime = 0;
     pendingTopicMetadata = null;
     destroyPanel();
-    
-    // Attempt to sync progress from the new page
     setTimeout(syncPageProgress, 1000);
 
-    // Try to restore panel if navigating back to a topic (e.g. browser back)
+    // Restore panel if navigating back to the same roadmap with a pending topic
     chrome.storage.session.get(["pending_topic"]).then((res) => {
       if (res.pending_topic) {
         const topic = res.pending_topic as TopicMetadata;
-        // Check if the current URL matches the topic slug to avoid showing on wrong roadmap
         if (window.location.pathname.includes(topic.roadmapSlug)) {
           showPanel(topic);
         }
@@ -223,14 +229,14 @@ function setupNavigationSync() {
   });
 }
 
+// ========== Init ==========
+
 function init() {
   if (!window.location.hostname.includes("roadmap.sh")) return;
   console.log("[RoadmapHub] Content script initialized 🚀");
   setupNavigationSync();
   setupClickDetection();
   setupKeyboardDetection();
-
-  // Initial sync attempt
   setTimeout(syncPageProgress, 2000);
 }
 

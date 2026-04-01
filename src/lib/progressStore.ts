@@ -1,16 +1,16 @@
 export interface RoadmapProgress {
   slug: string;
   displayName: string;
-  completed: number;          // topics the extension has seen (or reconciled from page)
-  total: number;              // from page scrape or GitHub API fallback
-  progressPercent: number;    // always Math.round((completed/total)*100), clamped 0-100
-  firstCommitDate: string;    // ISO date "YYYY-MM-DD", set once
-  lastCommitDate: string;     // ISO date, updated on every commit
-  lastTopicName: string;      // e.g. "ACID Properties"
-  lastTopicPath: string;      // e.g. "backend/acid.md"
-  committedSlugs: string[];   // all topicSlugs ever committed, for dedup
-  syncedFromPage: boolean;    // true if we have page-scraped baseline data
-  officialTotal: number | null; // from GitHub API, null if not fetched yet
+  completed: number;
+  total: number;
+  progressPercent: number;
+  firstCommitDate: string;
+  lastCommitDate: string;
+  lastTopicName: string;
+  lastTopicPath: string;
+  committedSlugs: string[];
+  syncedFromPage: boolean;
+  officialTotal: number | null;
 }
 
 export type ProgressStore = Record<string, RoadmapProgress>;
@@ -29,8 +29,11 @@ export async function syncProgressFromPage(
 ): Promise<void> {
   const store = await getProgressStore();
   const existing = store[slug];
-  const reconciledCompleted = (existing?.committedSlugs?.length || 0) > 0 
-    ? Math.max(existing.completed, completed)  // take the higher number
+
+  // Take the higher of what the page reports vs what we have committed.
+  // This handles mid-progress users correctly without losing either source of truth.
+  const reconciledCompleted = existing
+    ? Math.max(existing.completed, completed)
     : completed;
 
   store[slug] = {
@@ -38,7 +41,7 @@ export async function syncProgressFromPage(
     displayName: existing?.displayName || displayName,
     completed: reconciledCompleted,
     total,
-    progressPercent: total > 0 ? Math.min(100, Math.round((reconciledCompleted / total) * 100)) : 0,
+    progressPercent: computePercent(reconciledCompleted, total),
     firstCommitDate: existing?.firstCommitDate || '',
     lastCommitDate: existing?.lastCommitDate || '',
     lastTopicName: existing?.lastTopicName || '',
@@ -47,9 +50,19 @@ export async function syncProgressFromPage(
     syncedFromPage: true,
     officialTotal: existing?.officialTotal || null,
   };
+
   await chrome.storage.local.set({ [STORAGE_KEY]: store });
 }
 
+/**
+ * Record a newly committed topic.
+ *
+ * Reconciliation rules (simplified):
+ * - committedSlugs is always the dedup source of truth for extension commits.
+ * - completed = max(page-reported, committedSlugs.length).
+ *   For first-time users (no prior commits) we trust the page's number as
+ *   the baseline so mid-progress users don't start from 1.
+ */
 export async function recordCommit(
   slug: string,
   topicSlug: string,
@@ -62,26 +75,32 @@ export async function recordCommit(
   const store = await getProgressStore();
   const existing = store[slug];
   const today = new Date().toISOString().split('T')[0];
-  
-  const committedSlugs = existing?.committedSlugs || [];
-  if (!committedSlugs.includes(topicSlug)) committedSlugs.push(topicSlug);
-  
-  // Reconcile: if we have no prior commits, trust the page's completed count
-  // as the baseline (handles mid-progress users)
-  const reconciledCompleted = (!existing || (existing.committedSlugs?.length || 0) === 0)
-    ? Math.max(pageCompleted, 1)
-    : Math.max(existing.completed + 1, committedSlugs.length);
-  
-  const reconciledTotal = pageTotal > 0 
-    ? pageTotal 
-    : (existing?.officialTotal || existing?.total || reconciledCompleted);
-  
+
+  // Accumulate deduplicated committed slugs
+  const committedSlugs = Array.from(
+    new Set([...(existing?.committedSlugs || []), topicSlug])
+  );
+
+  // Determine completed count
+  let completed: number;
+  if (!existing || committedSlugs.length === 1) {
+    // Very first commit: use page number as baseline (handles mid-progress users)
+    completed = Math.max(pageCompleted, 1);
+  } else {
+    // Subsequent commits: take whichever is highest — page or our tracked count
+    completed = Math.max(existing.completed + 1, committedSlugs.length, pageCompleted);
+  }
+
+  const total = pageTotal > 0
+    ? pageTotal
+    : (existing?.officialTotal || existing?.total || completed);
+
   store[slug] = {
     slug,
     displayName: displayName || existing?.displayName || slug,
-    completed: reconciledCompleted,
-    total: reconciledTotal,
-    progressPercent: Math.min(100, Math.round((reconciledCompleted / reconciledTotal) * 100)),
+    completed,
+    total,
+    progressPercent: computePercent(completed, total),
     firstCommitDate: existing?.firstCommitDate || today,
     lastCommitDate: today,
     lastTopicName: topicName,
@@ -90,7 +109,83 @@ export async function recordCommit(
     syncedFromPage: existing?.syncedFromPage || false,
     officialTotal: existing?.officialTotal || null,
   };
-  
+
   await chrome.storage.local.set({ [STORAGE_KEY]: store });
   return store;
+}
+
+/**
+ * Rebuild committedSlugs from a GitHub repo scan result.
+ * Used on reinstall or first-time sync to recover previously committed topics.
+ */
+export async function rebuildFromGitHub(
+  slugMap: Record<string, string[]>
+): Promise<void> {
+  const store = await getProgressStore();
+
+  for (const [slug, slugs] of Object.entries(slugMap)) {
+    const existing = store[slug];
+    const merged = Array.from(new Set([...(existing?.committedSlugs || []), ...slugs]));
+    const displayName = existing?.displayName || formatDisplayName(slug);
+
+    const completed = Math.max(existing?.completed || 0, merged.length);
+    const total = existing?.total || existing?.officialTotal || 0;
+
+    store[slug] = {
+      slug,
+      displayName,
+      completed,
+      total,
+      progressPercent: computePercent(completed, total),
+      firstCommitDate: existing?.firstCommitDate || '',
+      lastCommitDate: existing?.lastCommitDate || '',
+      lastTopicName: existing?.lastTopicName || '',
+      lastTopicPath: existing?.lastTopicPath || '',
+      committedSlugs: merged,
+      syncedFromPage: existing?.syncedFromPage || false,
+      officialTotal: existing?.officialTotal || null,
+    };
+  }
+
+  await chrome.storage.local.set({ [STORAGE_KEY]: store });
+}
+
+function computePercent(completed: number, total: number): number {
+  if (total <= 0) return 0;
+  return Math.min(100, Math.round((completed / total) * 100));
+}
+
+function formatDisplayName(slug: string): string {
+  return slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/**
+ * Generate a markdown export of the full progress store.
+ */
+export function generateExportMarkdown(store: ProgressStore): string {
+  const slugs = Object.keys(store)
+    .filter(k => store[k].committedSlugs?.length > 0)
+    .sort((a, b) => store[b].progressPercent - store[a].progressPercent);
+
+  if (slugs.length === 0) return '# RoadmapHub — Learning Export\n\nNo topics committed yet.\n';
+
+  const totalCommitted = slugs.reduce((s, k) => s + store[k].committedSlugs.length, 0);
+  const date = new Date().toISOString().split('T')[0];
+
+  let md = `# RoadmapHub — Learning Export\n\n`;
+  md += `> Generated: ${date} | Total topics committed: **${totalCommitted}** across **${slugs.length}** roadmaps\n\n---\n\n`;
+
+  for (const slug of slugs) {
+    const r = store[slug];
+    md += `## ${r.displayName} — ${r.progressPercent}% (${r.completed}/${r.total})\n\n`;
+    if (r.committedSlugs.length > 0) {
+      r.committedSlugs.forEach(ts => {
+        const name = ts.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        md += `- [${name}](${slug}/${ts}.md)\n`;
+      });
+    }
+    md += `\n`;
+  }
+
+  return md;
 }

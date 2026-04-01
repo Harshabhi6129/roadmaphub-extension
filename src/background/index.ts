@@ -6,55 +6,121 @@
  *  - Message routing from content script and popup
  *  - AI enhancement orchestration
  *  - GitHub commit orchestration
+ *  - Reinstall recovery (GitHub sync)
+ *  - Bulk commit
+ *  - Settings management
+ *  - Streak tracking
+ *  - Notes export
+ *  - Roadmap changelog detection
  */
-import { MSG, GITHUB_CLIENT_ID, GITHUB_SCOPES, WORKER_BASE_URL, EXTENSION_SECRET } from "@/lib/constants";
-import type { LearningCommitPayload, AIEnhanceRequest, AuthStatus, TypedExtensionMessage } from "@/lib/types";
-import { ensureRepo, commitLearning, updateReadme } from "./github";
+import {
+  MSG,
+  GITHUB_CLIENT_ID,
+  GITHUB_SCOPES,
+  WORKER_BASE_URL,
+  EXTENSION_SECRET,
+  GITHUB_ERRORS,
+} from "@/lib/constants";
+import type {
+  LearningCommitPayload,
+  AIEnhanceRequest,
+  AuthStatus,
+  TypedExtensionMessage,
+  TopicMetadata,
+  BulkCommitResult,
+  ChangelogCheckResult,
+} from "@/lib/types";
+import {
+  ensureRepo,
+  commitLearning,
+  updateReadme,
+  syncCommittedSlugsFromGitHub,
+  translateGitHubError,
+} from "./github";
 import { enhanceWithAI, buildMarkdown } from "./ai";
 import { addToQueue } from "./queue";
 import { setupAlarms } from "./alarms";
-import { syncProgressFromPage, recordCommit, getProgressStore } from "@/lib/progressStore";
+import {
+  syncProgressFromPage,
+  recordCommit,
+  getProgressStore,
+  rebuildFromGitHub,
+  generateExportMarkdown,
+} from "@/lib/progressStore";
 import { getOfficialTopicCount } from "@/lib/roadmapData";
+import { getSettings, saveSettings } from "@/lib/settings";
+import { getStreakData, recordCommitForStreak } from "@/lib/streakStore";
 
-// Initialize alarms
 setupAlarms();
 
-// ========== Chrome message listener ==========
-chrome.runtime.onMessage.addListener((message: TypedExtensionMessage, _sender, sendResponse) => {
-  const { type, payload } = message;
+// ========== Message listener ==========
 
-  switch (type) {
-    case MSG.GET_AUTH_STATUS:
-      handleGetAuthStatus().then(sendResponse);
-      return true; // async
+chrome.runtime.onMessage.addListener(
+  (message: TypedExtensionMessage, _sender, sendResponse) => {
+    const { type, payload } = message;
 
-    case MSG.LOGIN_GITHUB:
-      handleOAuthLogin().then(sendResponse);
-      return true;
+    switch (type) {
+      case MSG.GET_AUTH_STATUS:
+        handleGetAuthStatus().then(sendResponse);
+        return true;
 
-    case MSG.LOGOUT_GITHUB:
-      handleLogout().then(sendResponse);
-      return true;
+      case MSG.LOGIN_GITHUB:
+        handleOAuthLogin().then(sendResponse);
+        return true;
 
-    case MSG.AI_ENHANCE:
-      handleAIEnhance(payload).then(sendResponse);
-      return true;
+      case MSG.LOGOUT_GITHUB:
+        handleLogout().then(sendResponse);
+        return true;
 
-    case MSG.COMMIT_LEARNING:
-      handleCommit(payload, sendResponse);
-      return true;
+      case MSG.AI_ENHANCE:
+        handleAIEnhance(payload).then(sendResponse);
+        return true;
 
-    case MSG.SYNC_PROGRESS:
-      handleSyncProgress(payload).then(sendResponse);
-      return true;
+      case MSG.COMMIT_LEARNING:
+        handleCommit(payload, sendResponse);
+        return true;
 
-    case MSG.CHECK_TOPIC_EXISTS:
-      handleCheckTopicExists(payload).then(sendResponse);
-      return true;
+      case MSG.SYNC_PROGRESS:
+        handleSyncProgress(payload).then(sendResponse);
+        return true;
+
+      case MSG.CHECK_TOPIC_EXISTS:
+        handleCheckTopicExists(payload).then(sendResponse);
+        return true;
+
+      case MSG.SYNC_FROM_GITHUB:
+        handleSyncFromGitHub().then(sendResponse);
+        return true;
+
+      case MSG.BULK_COMMIT:
+        handleBulkCommit(payload.topics, sendResponse);
+        return true;
+
+      case MSG.GET_SETTINGS:
+        getSettings().then(sendResponse);
+        return true;
+
+      case MSG.SAVE_SETTINGS:
+        saveSettings(payload).then(() => sendResponse({ success: true }));
+        return true;
+
+      case MSG.GET_STREAK:
+        getStreakData().then(sendResponse);
+        return true;
+
+      case MSG.EXPORT_NOTES:
+        handleExportNotes().then(sendResponse);
+        return true;
+
+      case MSG.CHECK_ROADMAP_UPDATES:
+        handleCheckRoadmapUpdates(payload).then(sendResponse);
+        return true;
+    }
   }
-});
+);
 
-// ========== Auth Handlers ==========
+// ========== Auth handlers ==========
+
 async function handleGetAuthStatus(): Promise<AuthStatus> {
   const result = await chrome.storage.local.get(["gh_token", "gh_username", "gh_avatar"]);
   if (result.gh_token) {
@@ -67,17 +133,8 @@ async function handleGetAuthStatus(): Promise<AuthStatus> {
   return { isLoggedIn: false };
 }
 
-/**
- * GitHub OAuth flow using chrome.identity.launchWebAuthFlow.
- *
- * 1. Opens GitHub's authorize URL in a popup
- * 2. User authorizes → GitHub redirects with auth code
- * 3. We exchange the code for an access token
- * 4. Store the token in chrome.storage.local
- */
 async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }> {
   try {
-    // Build the GitHub authorization URL
     const redirectUrl = chrome.identity.getRedirectURL();
     const authUrl = new URL("https://github.com/login/oauth/authorize");
     authUrl.searchParams.set("client_id", GITHUB_CLIENT_ID);
@@ -85,81 +142,75 @@ async function handleOAuthLogin(): Promise<{ success: boolean; error?: string }>
     authUrl.searchParams.set("scope", GITHUB_SCOPES);
     authUrl.searchParams.set("state", crypto.randomUUID());
 
-    console.log("[RoadmapHub] Starting OAuth flow via Worker Proxy...");
-
-    // 1. Launch the auth flow with a 2-minute timeout
     const authPromise = chrome.identity.launchWebAuthFlow({
       url: authUrl.toString(),
       interactive: true,
     });
-
     const timeoutPromise = new Promise<undefined>((_, reject) =>
-      setTimeout(() => reject(new Error("Authentication timed out (2 minutes).")), 120000)
+      setTimeout(
+        () => reject(new Error("Authentication timed out. Please try again.")),
+        120000
+      )
     );
 
     const responseUrl = await Promise.race([authPromise, timeoutPromise]);
-
     if (!responseUrl) {
-      return { success: false, error: "OAuth flow was cancelled or timed out." };
+      return { success: false, error: "Sign-in was cancelled or timed out." };
     }
 
-    // 2. Extract the auth code
     const url = new URL(responseUrl);
     const code = url.searchParams.get("code");
-
     if (!code) {
       return { success: false, error: "No authorization code received from GitHub." };
     }
 
-    // 3. Exchange the code via Worker Proxy (Secure)
     const response = await fetch(`${WORKER_BASE_URL}/github/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Extension-Secret": EXTENSION_SECRET
+        "X-Extension-Secret": EXTENSION_SECRET,
       },
       body: JSON.stringify({ code }),
     });
 
     if (!response.ok) {
-      return { success: false, error: `Worker Proxy error: ${response.status}` };
+      const status = response.status;
+      const msg = GITHUB_ERRORS[status] || `Sign-in failed (server error ${status}). Try again.`;
+      return { success: false, error: msg };
     }
 
     const tokenData = await response.json();
     const accessToken = tokenData.access_token;
-
     if (!accessToken) {
       return {
         success: false,
-        error: tokenData.error_description || "Failed to get access token from worker.",
+        error: tokenData.error_description || "Could not get access token. Try again.",
       };
     }
 
-    // 4. Fetch user info
     const userResp = await fetch("https://api.github.com/user", {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-
     if (!userResp.ok) {
-      return { success: false, error: "Failed to fetch GitHub user info." };
+      return { success: false, error: "Connected to GitHub but could not load your profile. Try signing in again." };
     }
 
     const user = await userResp.json();
-
-    // 5. Store token and metadata
     await chrome.storage.local.set({
       gh_token: accessToken,
       gh_username: user.login,
       gh_avatar: user.avatar_url,
     });
 
-    // 6. Ensure repo exists
+    const settings = await getSettings();
     await ensureRepo(accessToken);
 
-    console.log("[RoadmapHub] ✅ OAuth complete:", user.login);
+    // Warm the topic count cache and sync any existing repo data in the background
+    handleSyncFromGitHub().catch(console.error);
+
+    console.log("[RoadmapHub] OAuth complete:", user.login);
     return { success: true };
   } catch (e) {
-    console.error("[RoadmapHub] OAuth error:", e);
     return { success: false, error: (e as Error).message };
   }
 }
@@ -169,7 +220,8 @@ async function handleLogout(): Promise<{ success: boolean }> {
   return { success: true };
 }
 
-// ========== AI Handler ==========
+// ========== AI handler ==========
+
 async function handleAIEnhance(
   payload: AIEnhanceRequest
 ): Promise<{ success: boolean; data?: unknown; error?: string }> {
@@ -181,21 +233,24 @@ async function handleAIEnhance(
   }
 }
 
-// ========== Commit Handler ==========
+// ========== Commit handler ==========
+
 async function handleCommit(
   payload: LearningCommitPayload,
   sendResponse: (response?: any) => void
 ): Promise<void> {
   try {
-    console.log("[RoadmapHub] 📥 Commit request received for:", payload.topic.topicName);
-    
     const result = await chrome.storage.local.get(["gh_token"]);
     const token = result.gh_token;
     if (!token) {
-      console.warn("[RoadmapHub] ❌ No GitHub token found.");
-      sendResponse({ success: false, error: "Not connected to GitHub. Please sign in via the extension popup." });
+      sendResponse({
+        success: false,
+        error: "Not connected to GitHub. Please sign in via the extension popup.",
+      });
       return;
     }
+
+    const settings = await getSettings();
 
     const markdown = buildMarkdown(
       payload.topic.topicName,
@@ -205,36 +260,31 @@ async function handleCommit(
       payload.notes,
       payload.code,
       payload.topic.resources,
-      payload.tags,
-      undefined,
-      undefined
+      payload.tags
     );
 
-    console.log("[RoadmapHub] 📝 Markdown built, length:", markdown.length);
-
     try {
-      console.log("[RoadmapHub] 🚀 Committing note to GitHub (30s timeout)...");
-      
       const commitWithTimeout = Promise.race([
-        commitLearning(token, payload, markdown),
-        new Promise<string>((_, reject) => 
-          setTimeout(() => reject(new Error("GitHub commit timed out (30 seconds). Check your connection.")), 30000)
-        )
+        commitLearning(token, payload, markdown, settings.repoName),
+        new Promise<string>((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Commit timed out after 30 seconds. Check your connection and try again.")),
+            30000
+          )
+        ),
       ]);
 
       const url = await commitWithTimeout;
-      console.log("[RoadmapHub] ✅ Note committed:", url);
-      
-      // Respond to UI IMMEDIATELY
+
+      // Respond to UI immediately
       sendResponse({ success: true, url });
 
-      // Non-blocking background updates
+      // Non-blocking background work
       (async () => {
         try {
-          console.log("[RoadmapHub] ⚙️ Starting background sync (Progress & README)...");
           const slug = payload.topic.roadmapSlug;
           const officialCount = await getOfficialTopicCount(slug, token);
-          
+
           const fullStore = await recordCommit(
             slug,
             payload.topic.topicSlug,
@@ -245,29 +295,37 @@ async function handleCommit(
             officialCount || payload.topic.totalTopics
           );
 
+          await recordCommitForStreak();
+
           const { gh_username } = await chrome.storage.local.get("gh_username");
-          await updateReadme(token, gh_username, fullStore);
-          console.log("[RoadmapHub] ✨ Background sync complete.");
+          await updateReadme(token, gh_username, fullStore, settings.repoName);
         } catch (bgErr) {
-          console.error("[RoadmapHub] ❌ Background sync failed:", bgErr);
+          console.error("[RoadmapHub] Background sync failed:", bgErr);
         }
       })();
-
     } catch (commitError: any) {
-      console.warn("[RoadmapHub] ⚠️ Primary commit failed. Attempting offline queue...", commitError.message);
+      // Primary commit failed — queue it for offline retry
       try {
         await addToQueue(payload, markdown);
-        sendResponse({ success: true, url: "", error: "Commit queued! It will be pushed when you are back online." });
+        sendResponse({
+          success: true,
+          url: "",
+          queued: true,
+          error: "You appear to be offline. Your commit has been queued and will be pushed automatically when you reconnect.",
+        });
       } catch (queueError: any) {
-        console.error("[RoadmapHub] ❌ Failed to queue commit:", queueError.message);
-        sendResponse({ success: false, error: commitError.message || "Commit failed." });
+        sendResponse({
+          success: false,
+          error: commitError.message || "Commit failed. Check your connection and try again.",
+        });
       }
     }
   } catch (e: any) {
-    console.error("[RoadmapHub] ❌ handleCommit critical error:", e.message);
     sendResponse({ success: false, error: e.message });
   }
 }
+
+// ========== Progress handler ==========
 
 async function handleSyncProgress(payload: {
   slug: string;
@@ -283,22 +341,158 @@ async function handleSyncProgress(payload: {
   }
 }
 
-/**
- * Checks if a topic has been already committed.
- * NOTE: This is based on the local progressStore. If a user reinstalls the extension
- * or clears local storage, it may lose track of previously committed topics until
- * a new commit or full sync reconciles it.
- */
+// ========== Topic exists check (with auto reinstall-recovery) ==========
+
 async function handleCheckTopicExists(payload: {
   slug: string;
   topicSlug: string;
 }): Promise<{ exists: boolean }> {
   try {
     const store = await getProgressStore();
+
+    // If the store is completely empty (fresh install or reinstall), trigger a
+    // background GitHub sync so committedSlugs are rebuilt. We don't await it
+    // here because we don't want to delay the UI — it will be correct on the
+    // next topic the user opens.
+    const totalCommitted = Object.values(store).reduce(
+      (sum, r) => sum + (r.committedSlugs?.length || 0),
+      0
+    );
+    if (totalCommitted === 0) {
+      handleSyncFromGitHub().catch(console.error);
+    }
+
     const roadmap = store[payload.slug];
     const exists = roadmap?.committedSlugs?.includes(payload.topicSlug) || false;
     return { exists };
-  } catch (e) {
+  } catch {
     return { exists: false };
   }
+}
+
+// ========== GitHub reinstall sync ==========
+
+async function handleSyncFromGitHub(): Promise<{ success: boolean; synced?: number; error?: string }> {
+  const { gh_token } = await chrome.storage.local.get("gh_token");
+  if (!gh_token) return { success: false, error: "Not connected to GitHub." };
+
+  try {
+    const settings = await getSettings();
+    const slugMap = await syncCommittedSlugsFromGitHub(gh_token, settings.repoName);
+    await rebuildFromGitHub(slugMap);
+    const synced = Object.values(slugMap).reduce((s, v) => s + v.length, 0);
+    console.log(`[RoadmapHub] Synced ${synced} topics from GitHub.`);
+    return { success: true, synced };
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+}
+
+// ========== Bulk commit handler ==========
+
+async function handleBulkCommit(
+  topics: TopicMetadata[],
+  sendResponse: (response?: any) => void
+): Promise<void> {
+  const { gh_token } = await chrome.storage.local.get("gh_token");
+  if (!gh_token) {
+    sendResponse({ success: false, error: "Not connected to GitHub." });
+    return;
+  }
+
+  const store = await getProgressStore();
+  const settings = await getSettings();
+  const result: BulkCommitResult = { committed: 0, skipped: 0, failed: 0, topicNames: [] };
+
+  for (const topic of topics) {
+    // Skip topics already committed
+    const alreadyCommitted = store[topic.roadmapSlug]?.committedSlugs?.includes(topic.topicSlug);
+    if (alreadyCommitted) {
+      result.skipped++;
+      continue;
+    }
+
+    const markdown = buildMarkdown(
+      topic.topicName,
+      topic.roadmapDomain,
+      topic.roadmapSlug,
+      topic.description,
+      "",
+      "",
+      topic.resources,
+      []
+    );
+
+    const payload: LearningCommitPayload = {
+      topic,
+      notes: "",
+      code: "",
+      tags: [],
+      commitMessage: `learn(${topic.roadmapSlug}): ${topic.topicName}`,
+      practiceFiles: [],
+    };
+
+    try {
+      await commitLearning(gh_token, payload, markdown, settings.repoName);
+      await recordCommit(
+        topic.roadmapSlug,
+        topic.topicSlug,
+        topic.topicName,
+        `${topic.roadmapSlug}/${topic.topicSlug}.md`,
+        topic.roadmapDomain,
+        topic.completedTopics,
+        topic.totalTopics
+      );
+      result.committed++;
+      result.topicNames.push(topic.topicName);
+    } catch (e) {
+      console.error(`[RoadmapHub] Bulk commit failed for ${topic.topicName}:`, e);
+      result.failed++;
+    }
+  }
+
+  if (result.committed > 0) {
+    await recordCommitForStreak();
+    // Update README after all bulk commits
+    try {
+      const fullStore = await getProgressStore();
+      const { gh_username } = await chrome.storage.local.get("gh_username");
+      await updateReadme(gh_token, gh_username, fullStore, settings.repoName);
+    } catch (e) {
+      console.error("[RoadmapHub] README update after bulk commit failed:", e);
+    }
+  }
+
+  sendResponse({ success: true, result });
+}
+
+// ========== Export handler ==========
+
+async function handleExportNotes(): Promise<{ success: boolean; markdown?: string; error?: string }> {
+  try {
+    const store = await getProgressStore();
+    const markdown = generateExportMarkdown(store);
+    return { success: true, markdown };
+  } catch (e) {
+    return { success: false, error: (e as Error).message };
+  }
+}
+
+// ========== Roadmap changelog detection ==========
+
+async function handleCheckRoadmapUpdates(payload: {
+  slug: string;
+  currentCount: number;
+}): Promise<ChangelogCheckResult> {
+  const store = await getProgressStore();
+  const previousCount = store[payload.slug]?.total || 0;
+  const newTopicsCount = Math.max(0, payload.currentCount - previousCount);
+
+  return {
+    slug: payload.slug,
+    previousCount,
+    currentCount: payload.currentCount,
+    hasNewTopics: newTopicsCount > 0,
+    newTopicsCount,
+  };
 }

@@ -1,19 +1,43 @@
 import { GEMINI_API_URL, EXTENSION_SECRET } from "@/lib/constants";
 import type { AIEnhanceRequest, AIEnhanceResponse, TopicResource } from "@/lib/types";
 
+/** Max characters allowed for user-supplied fields before they are truncated */
+const MAX_FIELD_LENGTH = 500;
+
 /**
- * Call the Gemini API to generate a structured learning summary.
+ * Sanitize a user-supplied string for safe inclusion in an AI prompt.
+ * - Truncates to prevent abuse / prompt injection via length
+ * - Removes control characters
+ * - Escapes characters that could break the surrounding JSON structure
+ */
+function sanitizeForPrompt(input: string): string {
+  if (!input) return '';
+  return input
+    .slice(0, MAX_FIELD_LENGTH)
+    .replace(/[\x00-\x1F\x7F]/g, ' ')   // remove control chars
+    .replace(/["\\]/g, (c) => `\\${c}`)  // escape quotes and backslashes
+    .trim();
+}
+
+/**
+ * Call the Gemini API via Worker proxy to generate a structured learning summary.
  */
 export async function enhanceWithAI(
   req: AIEnhanceRequest
 ): Promise<AIEnhanceResponse> {
+  // Sanitize all user-supplied inputs before they enter the prompt
+  const topicName = sanitizeForPrompt(req.topicName);
+  const roadmapDomain = sanitizeForPrompt(req.roadmapDomain);
+  const description = sanitizeForPrompt(req.description);
+  const notes = sanitizeForPrompt(req.notes);
+
   const prompt = `You are a helpful developer learning assistant.
 A user just completed a learning topic on roadmap.sh.
 
-Topic: ${req.topicName}
-Roadmap: ${req.roadmapDomain}
-Description: ${req.description}
-User Notes: ${req.notes || "(none)"}
+Topic: ${topicName}
+Roadmap: ${roadmapDomain}
+Description: ${description}
+User Notes: ${notes || "(none)"}
 
 Generate a JSON response with these fields:
 - "summary": A concise 2-3 sentence summary of what this topic covers.
@@ -24,9 +48,9 @@ Return ONLY valid JSON with no markdown fences or extra text.`;
 
   const resp = await fetch(GEMINI_API_URL, {
     method: "POST",
-    headers: { 
+    headers: {
       "Content-Type": "application/json",
-      "X-Extension-Secret": EXTENSION_SECRET
+      "X-Extension-Secret": EXTENSION_SECRET,
     },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
@@ -36,26 +60,45 @@ Return ONLY valid JSON with no markdown fences or extra text.`;
   if (!resp.ok) {
     const errBody = await resp.json().catch(() => ({}));
     const detail = errBody?.error?.message || resp.statusText;
-    throw new Error(`Gemini API error (${resp.status}): ${detail}`);
+    throw new Error(`AI enhancement failed (${resp.status}): ${detail}`);
   }
 
   const data = await resp.json();
-  const text =
-    data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+  const text: string = data?.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+
+  return parseAIResponse(text);
+}
+
+function parseAIResponse(text: string): AIEnhanceResponse {
+  // Strip markdown fences if Gemini wraps the response
+  const cleaned = text
+    .replace(/```json\n?/g, "")
+    .replace(/```\n?/g, "")
+    .trim();
 
   try {
-    return JSON.parse(text) as AIEnhanceResponse;
+    const parsed = JSON.parse(cleaned) as AIEnhanceResponse;
+    // Validate shape — all three fields must be present
+    if (
+      typeof parsed.summary === 'string' &&
+      Array.isArray(parsed.keyConcepts) &&
+      Array.isArray(parsed.tags)
+    ) {
+      return parsed;
+    }
+    throw new Error('Invalid AI response shape');
   } catch {
-    // If Gemini wraps it in markdown fences, strip them
-    const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "");
-    return JSON.parse(cleaned) as AIEnhanceResponse;
+    // Last-resort fallback so the panel never crashes
+    return {
+      summary: cleaned.slice(0, 300),
+      keyConcepts: [],
+      tags: [],
+    };
   }
 }
 
 /**
  * Build the final markdown string from topic data + optional AI enhancement.
- *
- * Uses the real roadmap.sh data structure with categorized resources.
  */
 export function buildMarkdown(
   topicName: string,
@@ -69,7 +112,7 @@ export function buildMarkdown(
   aiSummary?: string,
   aiKeyConcepts?: string[]
 ): string {
-  const date = new Date().toISOString().split("T")[0]; // YYYY-MM-DD
+  const date = new Date().toISOString().split("T")[0];
 
   let md = `# ${topicName}\n\n`;
   md += `> **Roadmap:** [${roadmapDomain}](https://roadmap.sh/${roadmapSlug})  \n`;
@@ -82,41 +125,31 @@ export function buildMarkdown(
 
   md += `---\n\n`;
 
-  // Summary section
   md += `## Summary\n\n`;
   md += `${aiSummary || description}\n\n`;
 
-  // Key concepts (from AI)
   if (aiKeyConcepts && aiKeyConcepts.length > 0) {
     md += `## Key Concepts\n\n`;
-    aiKeyConcepts.forEach((c) => {
-      md += `- ${c}\n`;
-    });
+    aiKeyConcepts.forEach((c) => { md += `- ${c}\n`; });
     md += `\n`;
   }
 
-  // Personal notes
   if (notes.trim()) {
     md += `## Personal Notes\n\n${notes}\n\n`;
   }
 
-  // Code snippet
   if (code.trim()) {
     md += `## Code Example\n\n\`\`\`\n${code}\n\`\`\`\n\n`;
   }
 
-  // Categorized resources (matching roadmap.sh's own structure)
   if (resources.length > 0) {
     md += `## Resources\n\n`;
-
-    // Group resources by type
     const grouped: Record<string, TopicResource[]> = {};
     for (const r of resources) {
       const type = r.type || "article";
       if (!grouped[type]) grouped[type] = [];
       grouped[type].push(r);
     }
-
     const typeLabels: Record<string, string> = {
       official: "📖 Official Documentation",
       article: "📝 Articles",
@@ -124,13 +157,10 @@ export function buildMarkdown(
       course: "🎓 Courses",
       book: "📚 Books",
     };
-
     for (const [type, items] of Object.entries(grouped)) {
       const label = typeLabels[type] || `📌 ${type.charAt(0).toUpperCase() + type.slice(1)}`;
       md += `### ${label}\n\n`;
-      items.forEach((r) => {
-        md += `- [${r.title}](${r.url})\n`;
-      });
+      items.forEach((r) => { md += `- [${r.title}](${r.url})\n`; });
       md += `\n`;
     }
   }

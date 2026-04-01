@@ -1,4 +1,5 @@
 import { MSG } from "./constants";
+import type { ExtensionSettings } from "./settings";
 
 /** Shared types used across content, background, and popup scripts */
 
@@ -69,6 +70,23 @@ export interface AuthStatus {
   avatarUrl?: string;
 }
 
+/** Result of a bulk commit operation */
+export interface BulkCommitResult {
+  committed: number;
+  skipped: number;
+  failed: number;
+  topicNames: string[];
+}
+
+/** Roadmap changelog check result */
+export interface ChangelogCheckResult {
+  slug: string;
+  previousCount: number;
+  currentCount: number;
+  hasNewTopics: boolean;
+  newTopicsCount: number;
+}
+
 /**
  * Type-safe message union for chrome.runtime messaging
  */
@@ -79,4 +97,14 @@ export type TypedExtensionMessage =
   | { type: typeof MSG.AI_ENHANCE; payload: AIEnhanceRequest }
   | { type: typeof MSG.COMMIT_LEARNING; payload: LearningCommitPayload }
   | { type: typeof MSG.SYNC_PROGRESS; payload: { slug: string; completed: number; total: number; displayName: string } }
-  | { type: typeof MSG.CHECK_TOPIC_EXISTS; payload: { slug: string; topicSlug: string } };
+  | { type: typeof MSG.CHECK_TOPIC_EXISTS; payload: { slug: string; topicSlug: string } }
+  | { type: typeof MSG.SYNC_FROM_GITHUB; payload?: never }
+  | { type: typeof MSG.BULK_COMMIT; payload: { topics: TopicMetadata[] } }
+  | { type: typeof MSG.GET_SETTINGS; payload?: never }
+  | { type: typeof MSG.SAVE_SETTINGS; payload: Partial<ExtensionSettings> }
+  | { type: typeof MSG.GET_STREAK; payload?: never }
+  | { type: typeof MSG.EXPORT_NOTES; payload?: never }
+  | { type: typeof MSG.CHECK_ROADMAP_UPDATES; payload: { slug: string; currentCount: number } };
+
+/** Re-export for convenience */
+export type { ExtensionSettings };

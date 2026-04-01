@@ -4,7 +4,7 @@ export default defineManifest({
   manifest_version: 3,
   name: "RoadmapHub",
   description: "Turn your roadmap.sh learning progress into a GitHub portfolio. LeetHub for learning roadmaps.",
-  version: "0.1.0",
+  version: "2.1.0",
   icons: {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -17,7 +17,11 @@ export default defineManifest({
       "48": "icons/icon48.png",
     },
   },
-  permissions: ["storage", "activeTab", "scripting", "identity", "alarms"],
+  options_ui: {
+    page: "src/options/index.html",
+    open_in_tab: true,
+  },
+  permissions: ["storage", "activeTab", "scripting", "identity", "alarms", "tabs"],
   host_permissions: [
     "https://roadmap.sh/*",
     "https://api.github.com/*",

@@ -1,6 +1,13 @@
 import React, { useState, useEffect, useCallback } from "react";
-import type { TopicMetadata, TopicResource, PracticeFile, AuthStatus } from "@/lib/types";
+import type {
+  TopicMetadata,
+  TopicResource,
+  PracticeFile,
+  AuthStatus,
+  ExtensionSettings,
+} from "@/lib/types";
 import { MSG } from "@/lib/constants";
+import { DEFAULT_SETTINGS, formatCommitMessage } from "@/lib/settings";
 
 interface FloatingPanelProps {
   topic: TopicMetadata;
@@ -16,135 +23,323 @@ const resourceBadgeColors: Record<string, { bg: string; color: string }> = {
   custom: { bg: "#1e293b", color: "#e2e8f0" },
 };
 
-// ========== Inline Styles ==========
 const S = {
-  shell: {
-    position: "fixed" as const, top: 0, right: 0, width: "390px", height: "100vh",
-    zIndex: 2147483647, fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
-    background: "#0f172a", color: "#e2e8f0", borderLeft: "1px solid #334155",
-    display: "flex", flexDirection: "column" as const, boxShadow: "-4px 0 24px rgba(0,0,0,0.5)",
-  },
+  shell: (position: "left" | "right"): React.CSSProperties => ({
+    position: "fixed",
+    top: 0,
+    [position]: 0,
+    width: "390px",
+    height: "100vh",
+    zIndex: 2147483647,
+    fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+    background: "#0f172a",
+    color: "#e2e8f0",
+    borderLeft: position === "right" ? "1px solid #334155" : "none",
+    borderRight: position === "left" ? "1px solid #334155" : "none",
+    display: "flex",
+    flexDirection: "column" as const,
+    boxShadow:
+      position === "right" ? "-4px 0 24px rgba(0,0,0,0.5)" : "4px 0 24px rgba(0,0,0,0.5)",
+  }),
   topBar: {
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    padding: "12px 20px", borderBottom: "1px solid #1e293b", background: "rgba(15,23,42,0.9)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    padding: "12px 20px",
+    borderBottom: "1px solid #1e293b",
+    background: "rgba(15,23,42,0.9)",
   },
   brandText: {
-    fontSize: "16px", fontWeight: 700,
+    fontSize: "16px",
+    fontWeight: 700,
     background: "linear-gradient(to right, #4ade80, #3b82f6)",
-    WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+    WebkitBackgroundClip: "text",
+    WebkitTextFillColor: "transparent",
   },
   closeBtn: {
-    background: "none", border: "none", color: "#94a3b8", cursor: "pointer",
-    padding: "4px", borderRadius: "6px", fontSize: "18px", lineHeight: 1,
+    background: "none",
+    border: "none",
+    color: "#94a3b8",
+    cursor: "pointer",
+    padding: "4px",
+    borderRadius: "6px",
+    fontSize: "18px",
+    lineHeight: 1,
   },
   header: { padding: "16px 20px", borderBottom: "1px solid #334155" },
   headerLabel: {
-    fontSize: "11px", fontWeight: 500, color: "#60a5fa",
-    textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: "4px",
+    fontSize: "11px",
+    fontWeight: 500,
+    color: "#60a5fa",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+    marginBottom: "4px",
   },
   headerTitle: { fontSize: "18px", fontWeight: 700, color: "#fff", margin: 0 },
   topicLink: {
-    fontSize: "11px", color: "#94a3b8", textDecoration: "none", marginTop: "4px", display: "block",
+    fontSize: "11px",
+    color: "#94a3b8",
+    textDecoration: "none",
+    marginTop: "4px",
+    display: "block",
   },
   scrollBody: { flex: 1, overflowY: "auto" as const, padding: "16px 20px" },
   section: { marginBottom: "20px" },
   label: {
-    display: "block", fontSize: "11px", fontWeight: 500, color: "#94a3b8",
-    textTransform: "uppercase" as const, letterSpacing: "0.05em", marginBottom: "6px",
+    display: "block",
+    fontSize: "11px",
+    fontWeight: 500,
+    color: "#94a3b8",
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.05em",
+    marginBottom: "6px",
   },
   textarea: {
-    width: "100%", borderRadius: "8px", border: "1px solid #475569", background: "#1e293b",
-    color: "#e2e8f0", fontSize: "13px", padding: "8px 12px", outline: "none",
-    resize: "vertical" as const, fontFamily: "inherit",
+    width: "100%",
+    borderRadius: "8px",
+    border: "1px solid #475569",
+    background: "#1e293b",
+    color: "#e2e8f0",
+    fontSize: "13px",
+    padding: "8px 12px",
+    outline: "none",
+    resize: "vertical" as const,
+    fontFamily: "inherit",
+    boxSizing: "border-box" as const,
+  },
+  codearea: {
+    width: "100%",
+    borderRadius: "8px",
+    border: "1px solid #475569",
+    background: "#0d1117",
+    color: "#a5f3fc",
+    fontSize: "12px",
+    padding: "8px 12px",
+    outline: "none",
+    resize: "vertical" as const,
+    fontFamily: "'Fira Code', 'Cascadia Code', 'Consolas', monospace",
+    boxSizing: "border-box" as const,
   },
   input: {
-    width: "100%", borderRadius: "8px", border: "1px solid #475569", background: "#1e293b",
-    color: "#e2e8f0", fontSize: "13px", padding: "8px 12px", outline: "none", fontFamily: "inherit",
+    width: "100%",
+    borderRadius: "8px",
+    border: "1px solid #475569",
+    background: "#1e293b",
+    color: "#e2e8f0",
+    fontSize: "13px",
+    padding: "8px 12px",
+    outline: "none",
+    fontFamily: "inherit",
+    boxSizing: "border-box" as const,
   },
   smallInput: {
-    flex: 1, borderRadius: "6px", border: "1px solid #475569", background: "#1e293b",
-    color: "#e2e8f0", fontSize: "12px", padding: "6px 10px", outline: "none", fontFamily: "inherit",
+    flex: 1,
+    borderRadius: "6px",
+    border: "1px solid #475569",
+    background: "#1e293b",
+    color: "#e2e8f0",
+    fontSize: "12px",
+    padding: "6px 10px",
+    outline: "none",
+    fontFamily: "inherit",
   },
   aiBtn: {
-    marginTop: "8px", display: "inline-flex", alignItems: "center", gap: "6px",
-    fontSize: "12px", color: "#c084fc", background: "none", border: "none", cursor: "pointer", padding: 0,
+    marginTop: "8px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "6px",
+    fontSize: "12px",
+    color: "#c084fc",
+    background: "none",
+    border: "none",
+    cursor: "pointer",
+    padding: 0,
   },
   resourceRow: {
-    display: "flex", alignItems: "flex-start", gap: "6px", marginBottom: "6px",
+    display: "flex",
+    alignItems: "flex-start",
+    gap: "6px",
+    marginBottom: "6px",
     padding: "4px 0",
   },
   resourceBadge: {
-    fontSize: "9px", fontWeight: 600, textTransform: "uppercase" as const,
-    borderRadius: "4px", padding: "2px 5px", marginTop: "2px", flexShrink: 0,
+    fontSize: "9px",
+    fontWeight: 600,
+    textTransform: "uppercase" as const,
+    borderRadius: "4px",
+    padding: "2px 5px",
+    marginTop: "2px",
+    flexShrink: 0,
     whiteSpace: "nowrap" as const,
   },
   resourceLink: {
-    fontSize: "12px", color: "#60a5fa", textDecoration: "none",
-    wordBreak: "break-all" as const, lineHeight: 1.5, flex: 1,
+    fontSize: "12px",
+    color: "#60a5fa",
+    textDecoration: "none",
+    wordBreak: "break-all" as const,
+    lineHeight: 1.5,
+    flex: 1,
   },
   removeBtn: {
-    background: "none", border: "none", color: "#64748b", cursor: "pointer",
-    fontSize: "14px", padding: "0 2px", lineHeight: 1, flexShrink: 0, marginTop: "1px",
+    background: "none",
+    border: "none",
+    color: "#64748b",
+    cursor: "pointer",
+    fontSize: "14px",
+    padding: "0 2px",
+    lineHeight: 1,
+    flexShrink: 0,
+    marginTop: "1px",
   },
-  addRow: {
-    display: "flex", gap: "6px", marginTop: "8px",
-  },
+  addRow: { display: "flex", gap: "6px", marginTop: "8px" },
   addBtn: {
-    background: "#16a34a", color: "#fff", border: "none", borderRadius: "6px",
-    fontSize: "12px", fontWeight: 600, padding: "6px 12px", cursor: "pointer",
+    background: "#16a34a",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: 600,
+    padding: "6px 12px",
+    cursor: "pointer",
     flexShrink: 0,
   },
   fileUploadLabel: {
-    display: "flex", alignItems: "center", gap: "8px", cursor: "pointer",
-    fontSize: "13px", color: "#94a3b8", border: "1px dashed #475569",
-    borderRadius: "8px", padding: "8px 12px",
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+    cursor: "pointer",
+    fontSize: "13px",
+    color: "#94a3b8",
+    border: "1px dashed #475569",
+    borderRadius: "8px",
+    padding: "8px 12px",
   },
   fileChip: {
-    display: "flex", alignItems: "center", justifyContent: "space-between",
-    fontSize: "12px", color: "#cbd5e1", background: "#1e293b",
-    borderRadius: "6px", padding: "4px 8px", marginTop: "4px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    fontSize: "12px",
+    color: "#cbd5e1",
+    background: "#1e293b",
+    borderRadius: "6px",
+    padding: "4px 8px",
+    marginTop: "4px",
   },
   footer: { padding: "16px 20px", borderTop: "1px solid #334155" },
-  commitBtn: {
-    width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
-    gap: "8px", borderRadius: "8px", background: "#16a34a", color: "#fff",
-    fontWeight: 600, fontSize: "14px", padding: "10px", border: "none", cursor: "pointer",
-  },
+  commitBtn: (isUpdate: boolean): React.CSSProperties => ({
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    borderRadius: "8px",
+    background: isUpdate ? "#2563eb" : "#16a34a",
+    color: "#fff",
+    fontWeight: 600,
+    fontSize: "14px",
+    padding: "10px",
+    border: "none",
+    cursor: "pointer",
+  }),
   errorBanner: {
-    borderRadius: "8px", background: "rgba(127,29,29,0.4)", border: "1px solid #991b1b",
-    padding: "10px 12px", fontSize: "13px", color: "#fca5a5", marginBottom: "16px",
+    borderRadius: "8px",
+    background: "rgba(127,29,29,0.4)",
+    border: "1px solid #991b1b",
+    padding: "10px 12px",
+    fontSize: "13px",
+    color: "#fca5a5",
+    marginBottom: "16px",
   },
   infoBanner: {
-    borderRadius: "8px", background: "rgba(30,58,95,0.4)", border: "1px solid #1e3a5f",
-    padding: "10px 12px", fontSize: "13px", color: "#93c5fd", marginBottom: "16px",
-    display: "flex", gap: "8px", alignItems: "center",
+    borderRadius: "8px",
+    background: "rgba(30,58,95,0.4)",
+    border: "1px solid #1e3a5f",
+    padding: "10px 12px",
+    fontSize: "13px",
+    color: "#93c5fd",
+    marginBottom: "16px",
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+  },
+  warningBanner: {
+    borderRadius: "8px",
+    background: "rgba(124,45,18,0.4)",
+    border: "1px solid #9a3412",
+    padding: "8px 12px",
+    fontSize: "12px",
+    color: "#fdba74",
+    marginBottom: "12px",
   },
   successContainer: {
-    display: "flex", flexDirection: "column" as const, alignItems: "center",
-    justifyContent: "center", height: "100%", gap: "16px", padding: "24px",
+    display: "flex",
+    flexDirection: "column" as const,
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100%",
+    gap: "16px",
+    padding: "24px",
+  },
+  shareBtn: {
+    display: "flex",
+    alignItems: "center",
+    gap: "6px",
+    background: "#0a66c2",
+    color: "#fff",
+    border: "none",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: 600,
+    padding: "8px 14px",
+    cursor: "pointer",
   },
 };
 
+/** Validate that a string is a well-formed http/https URL */
+function isValidUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
+  const [settings, setSettings] = useState<ExtensionSettings>(DEFAULT_SETTINGS);
   const [authStatus, setAuthStatus] = useState<AuthStatus>({ isLoggedIn: false });
   const [isAlreadyCommitted, setIsAlreadyCommitted] = useState(false);
   const [description, setDescription] = useState(topic.description);
   const [notes, setNotes] = useState("");
+  const [code, setCode] = useState("");
   const [tags, setTags] = useState("");
   const [resources, setResources] = useState<TopicResource[]>([...topic.resources]);
   const [newResourceUrl, setNewResourceUrl] = useState("");
+  const [urlError, setUrlError] = useState("");
   const [commitMessage, setCommitMessage] = useState(
     `learn(${topic.roadmapSlug}): ${topic.topicName}`
   );
   const [practiceFiles, setPracticeFiles] = useState<PracticeFile[]>([]);
   const [status, setStatus] = useState<"idle" | "loading" | "enhancing" | "success" | "error">("idle");
   const [commitUrl, setCommitUrl] = useState("");
+  const [isQueued, setIsQueued] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
+  const [linkedInCopied, setLinkedInCopied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    
-    // Check Auth
+
+    // Load settings (for panel position, AI toggle, commit format)
+    chrome.runtime.sendMessage({ type: MSG.GET_SETTINGS }, (s: ExtensionSettings) => {
+      if (cancelled || !s) return;
+      setSettings(s);
+      // Re-apply commit message format from settings
+      const action = isAlreadyCommitted ? "update" : "learn";
+      setCommitMessage(
+        formatCommitMessage(s.commitMessageFormat, action, topic.roadmapSlug, topic.topicName)
+      );
+    });
+
     chrome.runtime.sendMessage({ type: MSG.GET_AUTH_STATUS }, (resp: AuthStatus) => {
       if (cancelled) return;
       if (chrome.runtime.lastError) {
@@ -154,17 +349,23 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
       setAuthStatus(resp);
     });
 
-    // Check if Already Committed
     chrome.runtime.sendMessage(
-      { 
-        type: MSG.CHECK_TOPIC_EXISTS, 
-        payload: { slug: topic.roadmapSlug, topicSlug: topic.topicSlug } 
+      {
+        type: MSG.CHECK_TOPIC_EXISTS,
+        payload: { slug: topic.roadmapSlug, topicSlug: topic.topicSlug },
       },
       (resp: { exists: boolean }) => {
-        if (cancelled) return;
-        if (resp?.exists) {
+        if (cancelled || !resp) return;
+        if (resp.exists) {
           setIsAlreadyCommitted(true);
-          setCommitMessage(`update(${topic.roadmapSlug}): ${topic.topicName}`);
+          setCommitMessage(
+            formatCommitMessage(
+              DEFAULT_SETTINGS.commitMessageFormat,
+              "update",
+              topic.roadmapSlug,
+              topic.topicName
+            )
+          );
         }
       }
     );
@@ -172,23 +373,25 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
     return () => { cancelled = true; };
   }, [topic.roadmapSlug, topic.topicSlug]);
 
-  // Remove a resource
   const removeResource = useCallback((index: number) => {
     setResources(prev => prev.filter((_, i) => i !== index));
   }, []);
 
-  // Add a custom resource
   const addResource = useCallback(() => {
     const url = newResourceUrl.trim();
     if (!url) return;
 
-    // Infer type from URL
+    if (!isValidUrl(url)) {
+      setUrlError("Please enter a valid http/https URL.");
+      return;
+    }
+    setUrlError("");
+
     let type = "custom";
     if (url.includes("youtube.com") || url.includes("youtu.be")) type = "video";
     else if (url.includes("udemy.com") || url.includes("coursera.org")) type = "course";
     else if (url.includes("docs.") || url.includes("documentation")) type = "official";
 
-    // Extract a title from the URL
     const title = url
       .replace(/^https?:\/\//, "")
       .replace(/^www\./, "")
@@ -201,8 +404,8 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
     setNewResourceUrl("");
   }, [newResourceUrl]);
 
-  // AI Enhance
   const handleAIEnhance = useCallback(async () => {
+    if (!settings.aiEnabled) return;
     setStatus("enhancing");
     chrome.runtime.sendMessage(
       {
@@ -220,7 +423,7 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
           setStatus("idle");
           return;
         }
-        if (resp.success && resp.data) {
+        if (resp?.success && resp.data) {
           setDescription(resp.data.summary);
           if (resp.data.tags?.length) {
             const existing = tags.split(",").map(t => t.trim()).filter(Boolean);
@@ -232,18 +435,21 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
             resp.data!.keyConcepts.map(c => `- ${c}`).join("\n")
           );
         } else {
-          setErrorMsg(resp.error || "AI enhancement failed");
+          setErrorMsg(resp?.error || "AI enhancement failed. You can still commit without it.");
         }
         setStatus("idle");
       }
     );
-  }, [topic, description, notes, tags]);
+  }, [topic, description, notes, tags, settings.aiEnabled]);
 
-  // File upload
   const handleFileUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
     Array.from(files).forEach(file => {
+      if (file.size > 10 * 1024 * 1024) {
+        setErrorMsg(`"${file.name}" is too large (max 10 MB per file).`);
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = (reader.result as string).split(",")[1];
@@ -253,47 +459,61 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
     });
   }, []);
 
-  // Commit — pass the current (edited) resources back to the topic
   const handleCommit = useCallback(async () => {
     setStatus("loading");
     setErrorMsg("");
     const tagsArray = tags.split(",").map(t => t.trim()).filter(Boolean);
-    const updatedTopic = { ...topic, resources };
 
     chrome.runtime.sendMessage(
       {
         type: MSG.COMMIT_LEARNING,
-        payload: { 
-          topic: { ...updatedTopic, description }, // Use current state (inc AI summary)
-          notes, 
-          code: "", 
-          tags: tagsArray, 
-          commitMessage, 
-          practiceFiles 
+        payload: {
+          topic: { ...topic, resources, description },
+          notes,
+          code,
+          tags: tagsArray,
+          commitMessage,
+          practiceFiles,
         },
       },
-      (resp: { success: boolean; url?: string; error?: string }) => {
+      (resp: { success: boolean; url?: string; queued?: boolean; error?: string }) => {
         if (chrome.runtime.lastError) {
           setErrorMsg("Extension connection lost. Please refresh the page.");
           setStatus("error");
           return;
         }
-        if (resp.success) {
+        if (resp?.success) {
           setStatus("success");
           setCommitUrl(resp.url || "");
+          setIsQueued(!!resp.queued);
         } else {
           setStatus("error");
-          setErrorMsg(resp.error || "Commit failed");
+          setErrorMsg(resp?.error || "Commit failed. Please try again.");
         }
       }
     );
-  }, [topic, resources, notes, tags, commitMessage, practiceFiles]);
+  }, [topic, resources, notes, code, tags, commitMessage, practiceFiles]);
+
+  const handleCopyLinkedIn = useCallback(() => {
+    const post =
+      `Just completed "${topic.topicName}" on the ${topic.roadmapDomain} roadmap! 🚀\n\n` +
+      `Automatically committed my notes to GitHub with RoadmapHub — the LeetHub for roadmap.sh.\n\n` +
+      `${commitUrl ? `📝 Notes: ${commitUrl}\n\n` : ""}` +
+      `#learning #developer #roadmapsh #${topic.roadmapSlug.replace(/-/g, "")}`;
+
+    navigator.clipboard.writeText(post).then(() => {
+      setLinkedInCopied(true);
+      setTimeout(() => setLinkedInCopied(false), 2500);
+    });
+  }, [topic, commitUrl]);
+
+  const position = settings.panelPosition || "right";
 
   // ===== RENDER =====
 
   if (!authStatus.isLoggedIn) {
     return (
-      <div style={S.shell}>
+      <div style={S.shell(position)}>
         <TopBar onClose={onClose} />
         <div style={S.successContainer}>
           <span style={{ fontSize: "36px" }}>🔗</span>
@@ -307,20 +527,43 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
 
   if (status === "success") {
     return (
-      <div style={S.shell}>
+      <div style={S.shell(position)}>
         <TopBar onClose={onClose} />
         <div style={S.successContainer}>
-          <span style={{ fontSize: "48px" }}>{commitUrl ? "✅" : "⏳"}</span>
+          <span style={{ fontSize: "48px" }}>{isQueued ? "⏳" : "✅"}</span>
           <p style={{ fontSize: "18px", fontWeight: 600, color: "#fff" }}>
-            {commitUrl ? "Committed!" : "Queued for commit"}
+            {isQueued ? "Queued for commit" : "Committed!"}
           </p>
+          {isQueued && (
+            <p style={{ fontSize: "12px", color: "#94a3b8", textAlign: "center" }}>
+              You're offline. Your note will be pushed automatically when you reconnect.
+            </p>
+          )}
           {commitUrl && (
-            <a href={commitUrl} target="_blank" rel="noreferrer noopener"
-               style={{ fontSize: "13px", color: "#60a5fa", textDecoration: "underline" }}>
+            <a
+              href={commitUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              style={{ fontSize: "13px", color: "#60a5fa", textDecoration: "underline" }}
+            >
               View on GitHub →
             </a>
           )}
-          <button onClick={onClose} style={{ ...S.input, width: "auto", cursor: "pointer", textAlign: "center" }}>
+          {!isQueued && (
+            <button onClick={handleCopyLinkedIn} style={S.shareBtn}>
+              {linkedInCopied ? "✅ Copied!" : "🔗 Copy LinkedIn Post"}
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            style={{
+              ...S.input,
+              width: "auto",
+              cursor: "pointer",
+              textAlign: "center" as const,
+              padding: "8px 24px",
+            }}
+          >
             Close
           </button>
         </div>
@@ -328,31 +571,34 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
     );
   }
 
-  const topicUrl = `https://roadmap.sh/${topic.roadmapSlug}`;
-
   return (
-    <div style={S.shell}>
+    <div style={S.shell(position)}>
       <TopBar onClose={onClose} />
 
-      {/* Header with topic link */}
       <div style={S.header}>
         <p style={S.headerLabel}>{topic.roadmapDomain}</p>
         <h2 style={S.headerTitle}>{topic.topicName}</h2>
-        <a href={topicUrl} target="_blank" rel="noreferrer noopener" style={S.topicLink}>
+        <a
+          href={`https://roadmap.sh/${topic.roadmapSlug}`}
+          target="_blank"
+          rel="noreferrer noopener"
+          style={S.topicLink}
+        >
           🔗 roadmap.sh/{topic.roadmapSlug}
         </a>
       </div>
 
-      {/* Scrollable form */}
       <div style={S.scrollBody}>
         {errorMsg && <div style={S.errorBanner}>{errorMsg}</div>}
-        
+
         {isAlreadyCommitted && (
           <div style={S.infoBanner}>
             <span style={{ fontSize: "16px" }}>🔄</span>
             <div>
               <strong>Already committed</strong>
-              <div style={{ fontSize: "11px", opacity: 0.8 }}>This topic exists in your repo. Committing will update the existing file.</div>
+              <div style={{ fontSize: "11px", opacity: 0.8 }}>
+                This topic exists in your repo. Committing will update the existing file.
+              </div>
             </div>
           </div>
         )}
@@ -360,65 +606,100 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
         {/* Description */}
         <div style={S.section}>
           <label style={S.label}>Description</label>
-          <textarea value={description} onChange={e => setDescription(e.target.value)}
-                    rows={3} style={S.textarea} />
-          <button onClick={handleAIEnhance} disabled={status === "enhancing"}
-                  style={{ ...S.aiBtn, opacity: status === "enhancing" ? 0.5 : 1 }}>
-            {status === "enhancing" ? "⏳ Enhancing..." : "✨ Enhance with AI"}
-          </button>
+          <textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            rows={3}
+            style={S.textarea}
+          />
+          {settings.aiEnabled && (
+            <button
+              onClick={handleAIEnhance}
+              disabled={status === "enhancing"}
+              style={{ ...S.aiBtn, opacity: status === "enhancing" ? 0.5 : 1 }}
+            >
+              {status === "enhancing" ? "⏳ Enhancing..." : "✨ Enhance with AI"}
+            </button>
+          )}
         </div>
 
-        {/* Editable Resources */}
+        {/* Resources */}
         <div style={S.section}>
           <label style={S.label}>Resources ({resources.length})</label>
           {resources.map((r, i) => (
             <div key={i} style={S.resourceRow}>
-              <span style={{
-                ...S.resourceBadge,
-                background: resourceBadgeColors[r.type]?.bg || "#1e3a5f",
-                color: resourceBadgeColors[r.type]?.color || "#93c5fd",
-              }}>
+              <span
+                style={{
+                  ...S.resourceBadge,
+                  background: resourceBadgeColors[r.type]?.bg || "#1e3a5f",
+                  color: resourceBadgeColors[r.type]?.color || "#93c5fd",
+                }}
+              >
                 {r.type}
               </span>
               <a href={r.url} target="_blank" rel="noreferrer noopener" style={S.resourceLink}>
                 {r.title}
               </a>
-              <button onClick={() => removeResource(i)} style={S.removeBtn} title="Remove">✕</button>
+              <button onClick={() => removeResource(i)} style={S.removeBtn} title="Remove">
+                ✕
+              </button>
             </div>
           ))}
-          {/* Add new resource */}
           <div style={S.addRow}>
             <input
               value={newResourceUrl}
-              onChange={e => setNewResourceUrl(e.target.value)}
+              onChange={e => { setNewResourceUrl(e.target.value); setUrlError(""); }}
               placeholder="Paste a URL (YouTube, docs, blog...)"
               style={S.smallInput}
               onKeyDown={e => { if (e.key === "Enter") addResource(); }}
             />
             <button onClick={addResource} style={S.addBtn}>+ Add</button>
           </div>
+          {urlError && (
+            <div style={{ ...S.warningBanner, marginTop: "6px" }}>{urlError}</div>
+          )}
         </div>
 
-        {/* Notes */}
+        {/* Personal Notes */}
         <div style={S.section}>
           <label style={S.label}>Personal Notes (optional)</label>
-          <textarea value={notes} onChange={e => setNotes(e.target.value)}
-                    rows={3} placeholder="Add your own notes or insights..."
-                    style={S.textarea} />
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={3}
+            placeholder={settings.noteTemplate || "Add your own notes or insights..."}
+            style={S.textarea}
+          />
+        </div>
+
+        {/* Code snippet */}
+        <div style={S.section}>
+          <label style={S.label}>Code Snippet (optional)</label>
+          <textarea
+            value={code}
+            onChange={e => setCode(e.target.value)}
+            rows={4}
+            placeholder={"// Paste a relevant code example here..."}
+            style={S.codearea}
+          />
         </div>
 
         {/* Practice Files */}
         <div style={S.section}>
           <label style={S.label}>Practice Files (optional)</label>
           <label style={S.fileUploadLabel}>
-            📁 Choose files...
+            📁 Choose files... (max 10 MB each)
             <input type="file" multiple onChange={handleFileUpload} style={{ display: "none" }} />
           </label>
           {practiceFiles.map((f, i) => (
             <div key={i} style={S.fileChip}>
               <span>{f.name}</span>
-              <button onClick={() => setPracticeFiles(prev => prev.filter((_, idx) => idx !== i))}
-                      style={{ ...S.removeBtn, color: "#94a3b8" }}>✕</button>
+              <button
+                onClick={() => setPracticeFiles(prev => prev.filter((_, idx) => idx !== i))}
+                style={{ ...S.removeBtn, color: "#94a3b8" }}
+              >
+                ✕
+              </button>
             </div>
           ))}
         </div>
@@ -426,29 +707,39 @@ export function FloatingPanel({ topic, onClose }: FloatingPanelProps) {
         {/* Tags */}
         <div style={S.section}>
           <label style={S.label}>Tags (comma separated)</label>
-          <input value={tags} onChange={e => setTags(e.target.value)}
-                 placeholder="http, networking, backend" style={S.input} />
+          <input
+            value={tags}
+            onChange={e => setTags(e.target.value)}
+            placeholder="http, networking, backend"
+            style={S.input}
+          />
         </div>
 
         {/* Commit Message */}
         <div style={S.section}>
           <label style={S.label}>Commit Message</label>
-          <input value={commitMessage} onChange={e => setCommitMessage(e.target.value)} style={S.input} />
+          <input
+            value={commitMessage}
+            onChange={e => setCommitMessage(e.target.value)}
+            style={S.input}
+          />
         </div>
       </div>
 
-      {/* Footer */}
       <div style={S.footer}>
-        <button 
-          onClick={handleCommit} 
+        <button
+          onClick={handleCommit}
           disabled={status === "loading"}
-          style={{ 
-            ...S.commitBtn, 
-            background: isAlreadyCommitted ? "#2563eb" : "#16a34a",
-            opacity: status === "loading" ? 0.6 : 1 
+          style={{
+            ...S.commitBtn(isAlreadyCommitted),
+            opacity: status === "loading" ? 0.6 : 1,
           }}
         >
-          {status === "loading" ? "⏳ Committing..." : isAlreadyCommitted ? "🔄 Update on GitHub" : "🚀 Commit to GitHub"}
+          {status === "loading"
+            ? "⏳ Committing..."
+            : isAlreadyCommitted
+            ? "🔄 Update on GitHub"
+            : "🚀 Commit to GitHub"}
         </button>
       </div>
     </div>
@@ -459,7 +750,9 @@ function TopBar({ onClose }: { onClose: () => void }) {
   return (
     <div style={S.topBar}>
       <span style={S.brandText}>RoadmapHub</span>
-      <button onClick={onClose} style={S.closeBtn} title="Close">✕</button>
+      <button onClick={onClose} style={S.closeBtn} title="Close">
+        ✕
+      </button>
     </div>
   );
 }
